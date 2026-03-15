@@ -1,197 +1,197 @@
-# AI Scrum Workflow
+# Renn Code
 
-This repo contains a lightweight AI-first Scrum workflow for turning a sponsor's plain-English product idea into a SQLite-backed planning and delivery system that can be used by Claude Code, Gemini CLI, and Codex.
+Renn Code is a DB-first AI product harness for turning a project workspace into an agent-driven delivery system with:
 
-The design goal is simple:
+- a SQLite control plane
+- a sprint-based execution loop
+- project-scoped agent skill files
+- a future VS Code extension that acts as mission control
 
-- keep the high-level product truth small
-- plan one layer at a time
-- execute one sprint at a time
-- feed UAT and change requests back into the system without rewriting everything
+The current repo contains the core orchestration ideas, SQLite-backed workflow, CLI/runtime pieces, and the evolving unified architecture spec for the full product direction.
 
-## Core Idea
+## Product Direction
 
-Instead of asking one LLM to generate and maintain one giant project file, this repo now uses:
+The direction of the project is now:
 
-- `package.json`: runtime/dependency manifest
-- `scripts/install.js`: setup helper for project or global installation
-- `delivery/migrations/001_init.sql`: versioned schema
-- `delivery/scrum.db`: runtime source of truth
-- `scripts/init-db.js`: DB bootstrap
-- `scripts/scrum.js`: orchestrator CLI for reads and writes
+- install the VS Code extension once
+- open any project workspace
+- if the workspace is not initialized, click a button to initialize the harness locally in that project
+- if the workspace is initialized, use the extension as a mission-control dashboard for status, design review, sprint execution, blockers, reviews, and analytics
+- keep the actual runtime state inside the workspace, not inside the extension
 
-This reduces drift, gives us queryability and validation, and avoids whole-file JSON rewrites.
+In other words:
 
-When installed as a package, the CLI now uses the current working directory as the workspace root. That means `delivery/scrum.db` and `planning/reports/` are created in the project where you run the command, not inside `node_modules`.
+- the extension is the product shell
+- the workspace is the runtime
+- SQLite is the source of truth
 
-## Workflow
+## Core Principles
 
-The intended loop is:
+- DB-first, not giant mutable project files
+- one active sprint at a time
+- automate deeply, but with explicit governance and review gates
+- keep project-local skill files for terminal-driven agent tools
+- preserve human visibility through dashboards, terminals, review flows, and audit trails
 
-```text
-init-product
-plan-epics
-plan-sprint
-run-sprint
-review-sprint
-close-sprint
-add-feedback
-plan-sprint
-run-sprint
-...
-```
+## What Lives In The Workspace
 
-Meaning:
+Each harness-enabled workspace should own its own local runtime, including:
 
-- `init-product` creates the high-level product skeleton
-- `plan-epics` creates or refines high-level epics
-- `plan-sprint` creates one sprint with stories and agent-sized tasks
-- `run-sprint` leases a small set of ready tasks with auto-selected execution mode
-- `review-sprint` approves submitted work or creates linked fix tasks when changes are required
-- `close-sprint` closes the sprint, carries unfinished work forward, and writes a closeout report
-- `add-feedback` converts UAT notes, bugs, and changes into structured updates
-- `sync-state` is the recovery lane for drift, stale task state, expired leases, and interrupted sessions
+- `delivery/scrum.db`
+- harness config
+- reports and artifacts
+- design files
+- project-scoped agent skill folders such as `.agents/skills/` and `.claude/skills/`
 
-## Repository Structure
+This keeps the setup portable, explicit, and team-friendly.
+
+## Workflow Shape
+
+The intended high-level loop is:
 
 ```text
-.agents/skills/
-.claude/skills/
-planning/
-delivery/
-docs/
-scripts/
-templates/
-README.md
-package.json
-```
-
-### Key folders
-
-- `.agents/skills/`: canonical shared skills for Codex and Gemini
-- `.claude/skills/`: Claude-native skill mirrors
-- `planning/`: optional exported snapshots
-- `delivery/`: SQLite migrations and runtime DB
-- `docs/`: workflow and planning reference docs
-- `scripts/`: install helper, DB bootstrap, and orchestrator CLI
-- `templates/`: small reference docs
-
-## Setup
-
-```text
-npm install
-node scripts/init-db.js
-```
-
-Or run the guided installer:
-
-```text
-node scripts/install.js
-```
-
-When you run the installer from another project with `project` scope, it now:
-- initializes `delivery/scrum.db` in that project
-- installs `.agents/skills/` for Codex and Gemini
-- installs `.claude/skills/` for Claude Code
-
-## Package CLI
-
-If you install this package into another project, it exposes these binaries:
-
-```text
-ai-scrum-install
-ai-scrum-init
-ai-scrum
-```
-
-Example:
-
-```text
-npm install /path/to/ai-scrum-workflow
-npx ai-scrum-install
-npx ai-scrum-init
-npx ai-scrum show-product
-```
-
-Or after a global install / linked bin:
-
-```text
-ai-scrum-install
-ai-scrum-init
-ai-scrum show-product
-```
-
-### Claude Code
-
-Claude reads project skills from `.claude/skills/`.
-
-Use:
-
-```text
-/init-product
+/start
 /plan-epics
 /plan-sprint
 /run-sprint
 /review-sprint
 /close-sprint
 /add-feedback
-/sync-state
+/plan-sprint
+/run-sprint
+...
 ```
 
-Each skill should drive:
+Meaning:
+
+- `/start` bootstraps the project and creates the initial product state
+- `/plan-epics` defines the high-level feature groups
+- `/plan-sprint` creates exactly one active sprint with detailed work
+- `/run-sprint` runs the policy-aware sprint execution loop
+- `/review-sprint` approves work or creates follow-up fixes
+- `/close-sprint` closes the sprint and writes closeout output
+- `/add-feedback` feeds bugs, UAT, and sponsor feedback back into planning
+- `/sync-state` recovers from interruptions, stale state, and drift
+
+## Quick Path
+
+Small changes should not require the full ceremony of a large feature flow.
+
+`/quick` is intended to be the lightweight tracked-change lane for:
+
+- bug fixes
+- tiny UI or copy updates
+- small brownfield enhancements
+- low-risk refactors
+- follow-up fixes after review or UAT
+
+It should still create minimal DB-tracked work, evidence, and review state instead of bypassing the system.
+
+## VS Code Extension Vision
+
+The extension is not just a design renderer. It is intended to become mission control for the workspace.
+
+Planned extension responsibilities include:
+
+- detect whether a workspace is harness-enabled
+- offer one-click initialization when it is not
+- show a project dashboard when it is
+- expose buttons for the common workflow actions
+- provide design review and freeze flows
+- surface blockers, failures, reviews, and acceptance gates
+- show sprint and automation analytics
+- open VS Code terminals for watched setup and execution flows when the user wants to observe live work
+
+The extension should remain a UI over the same DB-backed system, not a second workflow engine.
+
+## Terminal And Agent Tooling
+
+Renn Code is designed to work well in both:
+
+- button-driven extension workflows
+- terminal-driven agent workflows
+
+The workspace-local skill folders are a feature, not a fallback. They make the project self-contained and let tools like Claude, Codex, and Gemini read project-scoped instructions directly.
+
+## Current Repository Contents
+
+Today this repo includes:
+
+- `scripts/scrum.js`: orchestrator CLI
+- `scripts/init-db.js`: DB bootstrap
+- `delivery/migrations/`: SQLite schema migrations
+- `.agents/skills/`: shared project skills
+- `.claude/skills/`: Claude-oriented mirrors
+- `harness-full.md`: the main unified architecture and product-direction spec
+
+## Setup Today
 
 ```text
+npm install
 node scripts/init-db.js
-node scripts/scrum.js ...
 ```
 
-### Gemini CLI
-
-Gemini can read the shared skills directly from `.agents/skills/`.
-
-Use the matching skill names in your prompt and let the skill drive:
+Or run the installer:
 
 ```text
-node scripts/init-db.js
-node scripts/scrum.js ...
+node scripts/install.js
 ```
 
-### Codex
-
-Codex reads the shared skills from `.agents/skills/`.
-
-Use:
+## Repository Structure
 
 ```text
-Use $init-product to initialize the DB-backed product state.
-Use $plan-epics to create epics through node scripts/scrum.js.
-Use $plan-sprint to create sprint data through node scripts/scrum.js.
-Use $run-sprint to claim and advance task state through node scripts/scrum.js.
-Use $review-sprint to review submitted work and create fix tasks when needed.
-Use $close-sprint to close the active sprint and generate a closeout report.
-Use $add-feedback to add feedback and bugs through node scripts/scrum.js.
-Use $sync-state to detect drift, repair safe inconsistencies, and recover the next step.
+.agents/skills/
+.claude/skills/
+delivery/
+docs/
+planning/
+scripts/
+templates/
+harness-full.md
+README.md
 ```
 
-## Suggested Usage Pattern
+### Key folders
 
-1. Start with `init-product` using the sponsor's plain-English requirement.
-2. Run `plan-epics` to create major feature groups only.
-3. Run `plan-sprint` to create just the next sprint.
-4. Run `run-sprint` to lease and execute a small set of ready tasks using the recommended mode.
-5. Run `review-sprint` to approve good work or generate fix tasks.
-6. Run `close-sprint` when implementation and review are complete for the active sprint.
-7. After human review or UAT, run `add-feedback`.
-8. Run `sync-state` whenever the session is interrupted or the board looks inconsistent.
-9. Repeat the loop.
+- `.agents/skills/`: shared project-scoped skills
+- `.claude/skills/`: Claude-oriented skill wrappers
+- `delivery/`: SQLite migrations and runtime DB location
+- `planning/`: reports and exported snapshots
+- `scripts/`: bootstrap and orchestration scripts
+- `docs/`: supporting reference docs
+- `harness-full.md`: current full product and architecture direction
 
-## Reference Files
+## Command Surface
 
-- [docs/ai-scrum-commands.md](/Users/ash/Development/Codex-projects/scrum-test/docs/ai-scrum-commands.md)
-- [docs/ai-scrum-workflow-diagram.md](/Users/ash/Development/Codex-projects/scrum-test/docs/ai-scrum-workflow-diagram.md)
-- [docs/product-idea-to-scrum-tree.md](/Users/ash/Development/Codex-projects/scrum-test/docs/product-idea-to-scrum-tree.md)
-- [templates/workspace-structure.md](/Users/ash/Development/Codex-projects/scrum-test/templates/workspace-structure.md)
+The current and intended command surface is centered around:
+
+- `/start`
+- `/resume`
+- `/status`
+- `/design`
+- `/review-design`
+- `/quick`
+- `/plan-epics`
+- `/plan-sprint`
+- `/run-sprint`
+- `/review-sprint`
+- `/close-sprint`
+- `/add-feedback`
+- `/sync-state`
 
 ## Why This Exists
 
-AI agents work better when they build one small layer at a time rather than generating and mutating one giant project file. This repo now keeps that state in SQLite while preserving the same small-loop planning and delivery model.
+The goal is to build a real product-development harness that feels closer to a disciplined engineering team than a one-shot AI generator:
+
+- plan at the right level
+- execute one sprint at a time
+- support both autonomy and human oversight
+- preserve traceability in the DB
+- keep the workspace self-contained
+- make the extension the best UX without making it the source of truth
+
+## Main Spec
+
+The most complete statement of the current direction lives in:
+
+- [harness-full.md](/Users/ash/Development/Codex-projects/combine-harness/v1/harness-full.md)

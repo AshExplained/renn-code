@@ -1,0 +1,5 @@
+delivery/scrum.db
+delivery/scrum.db-shm
+delivery/scrum.db-wal
+delivery/scrum.db-journal
+node_modules/

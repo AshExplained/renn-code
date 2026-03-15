@@ -1,0 +1,22 @@
+{
+  "name": "ai-scrum-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform SQLite-backed AI Scrum workflow for Claude Code, Codex, and Gemini CLI.",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "ai-scrum": "scripts/scrum.js",
+    "ai-scrum-init": "scripts/init-db.js",
+    "ai-scrum-install": "scripts/install.js"
+  },
+  "scripts": {
+    "setup": "node scripts/install.js",
+    "init-db": "node scripts/init-db.js",
+    "scrum": "node scripts/scrum.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0"
+  }
+}

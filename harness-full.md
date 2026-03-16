@@ -31,7 +31,7 @@ flowchart TD
         DREVIEW["Phase 3.5<br/>Design review + freeze<br/>extension or /review-design"]
         PLAN["Phase 4<br/>DB-backed epic / sprint / story / task planning"]
         BUILD["Phase 5<br/>Sprint execution loop"]
-        REVIEW["Phase 6<br/>Review, acceptance, fix-task generation"]
+        REVIEW["Phase 6<br/>Fresh-lens review,<br/>acceptance, fix-task generation"]
         CLOSE["Phase 7<br/>Sprint closeout + carry forward"]
         FEEDBACK["Phase 8<br/>UAT, bugs, sponsor feedback"]
         RESUME["Phase 9<br/>Sync / resume / drift recovery"]
@@ -60,7 +60,7 @@ flowchart TD
         MB["master_board<br/>product status, active sprint, next command"]
         EP["epics / stories / tasks / dependencies"]
         RUNS["session_log / task_leases / policy_events"]
-        QA["task_reviews / task_failures / acceptance gates"]
+        QA["task_reviews / reviewer sessions<br/>task_failures / acceptance gates"]
         FB["feedback / bugs / decisions / sprint_closures"]
         ART["artifacts / design assets<br/>tracked file metadata"]
     end
@@ -98,6 +98,7 @@ flowchart TD
     subgraph AUTO["Automated Sprint Loop"]
         RUNNER["Runner<br/>Node or Python adapter"]
         AGENT["Non-interactive coding session<br/>one leased task / one small batch"]
+        REVIEWER["Separate reviewer session / agent<br/>fresh-lens review when required"]
         TESTS["Health checks / tests / evidence capture"]
         COMMIT["Commit + log + status update"]
     end
@@ -108,6 +109,8 @@ flowchart TD
     AGENT --> TESTS
     TESTS --> COMMIT
     COMMIT --> ORCH
+    ORCH --> REVIEWER
+    REVIEWER --> QA
     ORCH --> RUNS
     ORCH --> EP
     ORCH --> QA
@@ -117,7 +120,7 @@ flowchart TD
         R2["Markdown and design files are artifacts, not workflow state"]
         R3["Slash commands and extension both read/write through ai-scrum"]
         R4["Runner never owns planning truth; it leases work from the DB"]
-        R5["Review and acceptance gates can create fix tasks and re-enter planning"]
+        R5["Review must use a fresh lens;<br/>review and acceptance gates can create fix tasks and re-enter planning"]
     end
 
     DB --- RULES
@@ -215,7 +218,7 @@ The merged system should expose one unified skill surface inside VS Code termina
 - `/design`
   Runs or resumes the UI/UX design phase, updates artifact tracking, and manages design freeze.
 - `/review-design`
-  Records design approval or requested changes, freezes approved design artifacts, and provides a CLI fallback when the VS Code extension is unavailable.
+  Records design approval or requested changes, freezes approved design artifacts, and provides a CLI fallback when the VS Code extension is unavailable. Design review should happen in a separate reviewer context from the design-generation session.
 - `/quick`
   Runs a lighter-weight tracked-change path for a small, clearly bounded change inside an existing project while still logging state, evidence, review, and acceptance requirements in the DB.
 
@@ -231,7 +234,7 @@ The merged system should expose one unified skill surface inside VS Code termina
 - `/run-sprint`
   Starts or resumes the policy-aware sprint execution loop for the active sprint by leasing ready tasks, choosing an execution mode, launching coding work, and deciding whether to continue, notify, or pause.
 - `/review-sprint`
-  Reviews submitted work, approves strong work, or creates fix tasks and findings when changes are needed.
+  Reviews submitted work from a separate reviewer session, reviewer agent, or human reviewer, then approves strong work or creates fix tasks and findings when changes are needed.
 - `/close-sprint`
   Closes the active sprint, writes a closeout report, and carries unfinished work forward.
 
@@ -377,6 +380,13 @@ The extension should install or refresh project-scoped tool folders such as:
 
 The VS Code extension should be the best design review experience, but it must not be the only one. Design approval should be a DB-tracked workflow step that works through the extension, the CLI, or direct artifact inspection.
 
+### Fresh-Lens Review Rule
+
+- design review should not be performed by the same implementation session that generated the design artifacts
+- when the reviewer is an AI agent, the review should happen in a separate review session or separate review agent context
+- when the reviewer is a human, the system should still record reviewer identity, decision, findings, and timestamps in the same DB-backed review flow
+- the purpose of the review step is to provide a fresh lens, not to let the builder self-certify completion
+
 ### Review Tiers
 
 - extension review
@@ -415,7 +425,7 @@ The VS Code extension should be the best design review experience, but it must n
 
 1. `/design` generates or updates `design_system.json` and `*.design.json` artifacts.
 2. The system records those artifacts in the DB and sets the design state to `pending_review`.
-3. The user reviews in the extension when available, or through CLI summaries and file references when it is not.
+3. A separate reviewer context reviews in the extension when available, or through CLI summaries and file references when it is not.
 4. The user records a decision through `/review-design`.
 5. If the decision is `changes_requested`, design work returns to `draft` or `changes_requested` and another iteration begins.
 6. If the decision is `approve`, the system records approval metadata, marks the design as `approved`, and then freezes that approved revision as the implementation baseline.
@@ -486,6 +496,52 @@ When a design is frozen, the system should record enough metadata to answer whic
 - the extension should read and write the same DB-backed design review state used by the CLI
 - extension approval should not create a separate workflow
 - the extension is the premium review surface, not the authoritative state holder
+
+## Fresh-Lens Delivery Review
+
+Major implementation review should be distinct from implementation itself. Renn Code should separate builder, reviewer, and acceptor responsibilities so the system gets a real audit pass instead of self-approval.
+
+### Core Roles
+
+- builder
+  The coding agent or coding session that plans or implements the work.
+- reviewer
+  A separate review agent or separate review session that checks the work against scope, tests, evidence, and exit criteria.
+- acceptor
+  A human or explicit acceptance gate that decides whether the reviewed work is acceptable for user-facing or policy-sensitive outcomes.
+
+### Core Rule
+
+- `/review-sprint` should run in a separate reviewer context, not reuse the same implementation session that built the work
+- the reviewer may be another agent session or a human reviewer, but it should have a fresh lens over the evidence and diff
+- implementation may report "ready for review", but it should not self-certify approval for major work
+- review and acceptance should remain distinct whenever human acceptance is required
+
+### Review Inputs
+
+The review context should inspect at least:
+
+- scoped goal, story, task, or phase objective
+- changed files and relevant diffs
+- evidence such as commits, test output, screenshots, or notes
+- declared exit criteria and acceptance gates
+- prior failures, findings, or follow-up work when relevant
+
+### Review Outcomes
+
+- `approved`
+  The work meets technical review expectations and may proceed toward acceptance or closure.
+- `changes_requested`
+  The work is close but needs follow-up fixes, and the system should create or route fix work.
+- `blocked`
+  The reviewer cannot responsibly approve because of missing context, failed evidence, policy concerns, or unresolved risk.
+
+### DB Expectations
+
+- review records should capture reviewer identity or reviewer session
+- review records should capture decision, summary, findings, and evidence reviewed
+- the system should preserve the separation between builder session history and reviewer session history
+- story or sprint closure should depend on approved review state, not only on implementation completion state
 
 ## Quick Path
 
@@ -756,6 +812,7 @@ The unified system should not force one universal operating style. Some users wi
 - otherwise, the runner should stop whenever `next_command` changes away from sprint execution into closeout, feedback, or planning that needs human input
 - the runner should stop when review gates fail, blockers are unresolved, or acceptance requirements are unmet
 - the runner should always preserve a clean resume path through DB state and session logs
+- when review is required, the runner should hand work to a separate reviewer context instead of letting the active builder session approve its own output
 
 ### Auto-Chain Limits And Config
 
@@ -1132,7 +1189,7 @@ Example styles:
 19. The runner leases ready tasks from the database and launches non-interactive coding sessions in small batches.
 20. Each coding session implements work, runs tests, captures evidence, updates task state, and commits progress.
 21. Submitted work enters review and acceptance gates tracked in the database.
-22. The user or agent runs `/review-sprint` to approve work or request changes.
+22. A separate reviewer session or reviewer agent runs `/review-sprint` to approve work or request changes.
 23. If review fails, the system creates fix tasks and routes them back into the same sprint backlog when appropriate.
 24. If work is interrupted or state drifts, the user runs `/sync-state` to repair safe inconsistencies and recover the next step.
 25. Once sprint work is complete, the system moves into closeout; this may happen automatically only when autonomy policy allows it, otherwise the user runs `/close-sprint`.

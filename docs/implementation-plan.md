@@ -156,6 +156,7 @@ Ship the extension as the product shell for workspace detection and setup.
 
 - users can install the extension once and initialize a workspace without manual setup steps
 - the extension never becomes the source of truth
+- Phase 1 is functionally complete once packaged-backend initialization, repair, and status flows work end to end; cross-platform packaging robustness for native dependencies should still be revisited during Phase 9 hardening
 
 ## Phase 2: Design Workflow And Review
 
@@ -184,6 +185,7 @@ Make UI/design work first-class, reviewable, and gated before implementation.
 - support superseding frozen designs through new revisions
 - prevent design-dependent execution from starting without required approval
 - support lightweight quick-path review for small UI changes
+- ensure design review happens in a separate reviewer context rather than the same design-generation session
 
 ### Primary Work Areas
 
@@ -200,6 +202,7 @@ Make UI/design work first-class, reviewable, and gated before implementation.
 - request design changes and verify iteration loops correctly
 - supersede a frozen design and verify revision history remains visible
 - verify `/run-sprint` is blocked when design freeze is required but missing
+- verify design review decisions can be linked to a separate reviewer session or reviewer identity
 
 ### Exit Criteria
 
@@ -272,6 +275,7 @@ Implement the policy-aware sprint execution loop with proper session tracking.
 - allow the extension to open watched VS Code terminals for long-running work
 - preserve resume paths and session history
 - record evidence, artifacts, and task/session outcomes
+- preserve a clean handoff from builder sessions into separate reviewer sessions when review is required
 
 ### Primary Work Areas
 
@@ -287,6 +291,7 @@ Implement the policy-aware sprint execution loop with proper session tracking.
 - verify a paused run can be resumed cleanly
 - verify visible terminal execution works from the extension
 - verify status/dashboard state reflects active sessions and leases
+- verify review-required work is handed off to a separate reviewer context instead of being self-approved by the active builder session
 
 ### Exit Criteria
 
@@ -388,6 +393,7 @@ Make human review and sprint closure operationally trustworthy.
 - closeout enforcement
 - carry-forward logic
 - release notes / closeout artifacts
+- fresh-lens review model for builder, reviewer, and acceptor responsibilities
 
 ### Scope
 
@@ -395,6 +401,8 @@ Make human review and sprint closure operationally trustworthy.
 - support user-facing acceptance gates
 - enforce sprint exit criteria before closeout
 - preserve carry-forward context for unfinished work
+- require `/review-sprint` to run in a separate reviewer session or separate reviewer agent context for major work
+- prevent the implementation session from self-certifying final approval when review is required
 
 ### Primary Work Areas
 
@@ -402,6 +410,7 @@ Make human review and sprint closure operationally trustworthy.
 - acceptance gate enforcement
 - closeout report generation
 - carry-forward and backlog re-entry logic
+- review-session identity and reviewer attribution
 
 ### Tests
 
@@ -410,10 +419,13 @@ Make human review and sprint closure operationally trustworthy.
 - verify closeout artifacts are generated
 - verify unfinished work is carried forward correctly
 - verify next-command logic is correct after closeout
+- verify review records store a separate reviewer identity or reviewer session
+- verify the same builder session cannot satisfy a required fresh-lens review gate by itself
 
 ### Exit Criteria
 
 - sprint closure is trustworthy for both humans and automation
+- review approval is distinct from implementation completion
 
 ## Phase 8: Mission Control Dashboard
 
@@ -437,6 +449,7 @@ Turn the extension into a real control surface for the workspace.
 - show counts and queues for tasks, reviews, blockers, failures, and feedback
 - expose primary action buttons
 - keep terminal-driven workflows visible and linkable from the dashboard
+- show enough review context that humans can distinguish builder activity from reviewer decisions
 
 ### Primary Work Areas
 
@@ -451,6 +464,7 @@ Turn the extension into a real control surface for the workspace.
 - verify action buttons trigger the correct backend flow
 - verify design review and sprint review states are visible
 - verify session, blocker, and failure surfaces update live or on refresh
+- verify reviewer identity or reviewer-session context is visible where review approval is required
 
 ### Exit Criteria
 
@@ -479,6 +493,7 @@ Make the product easier to trust, explain, and adopt.
   - automation effectiveness
 - improve onboarding and repair flows
 - keep the extension and CLI aligned around one source of truth
+- harden packaged-extension backend portability, especially around native runtime dependencies and cross-platform install behavior
 
 ### Primary Work Areas
 

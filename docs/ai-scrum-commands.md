@@ -14,7 +14,7 @@ This workspace now uses a SQLite-backed workflow:
 - `init-product`: initialize the database-backed product state from a plain-English idea.
 - `plan-epics`: create or refine epics through the orchestrator CLI.
 - `plan-sprint`: create one sprint, stories, and tasks through the orchestrator CLI.
-- `review-sprint`: review submitted tasks and turn review failures into fix tasks.
+- `review-sprint`: run a fresh-lens review in a separate reviewer session, reviewer agent, or human review context, then turn review failures into fix tasks.
 - `add-feedback`: add structured feedback and bugs through the orchestrator CLI.
 - `run-sprint`: lease ready tasks, auto-select an execution mode, and move tasks toward review.
 - `close-sprint`: close the active sprint, carry unfinished work forward, and write a closeout report.
@@ -82,3 +82,5 @@ plan-sprint
 run-sprint
 ...
 ```
+
+`review-sprint` should not be run by the same session that implemented the work when fresh-lens review is required.

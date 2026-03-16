@@ -8,6 +8,10 @@ This directory now stores the SQLite delivery state:
 - `migrations/004_guardrail_enforcement.sql`: policy event log
 - `migrations/005_session_log.sql`: session memory and resume support
 - `migrations/006_task_leases.sql`: run leases for orchestration
+- `migrations/007_acceptance_gates.sql`: story acceptance and human review gates
+- `migrations/008_workspace_config.sql`: workspace-level configuration singleton
+- `migrations/009_workflow_phase.sql`: product lifecycle phase tracking
+- `migrations/010_design_and_extension_metadata.sql`: design artifacts, design reviews (Phase 0 enabling schema for Phase 2), and extension install metadata
 - `scrum.db`: runtime database, intentionally gitignored
 
 Use:

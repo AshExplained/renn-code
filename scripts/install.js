@@ -5,8 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline/promises");
 const { spawnSync } = require("node:child_process");
-const { openDatabase } = require("./lib/scrum-db");
-const { evaluatePathPolicy, logPolicyEvent } = require("./lib/policy");
+const { initDatabase, openDatabase, dbPath, migrationsDir } = require("./lib/scrum-db");
+const { evaluatePathPolicy, logPolicyEvent, tableExists } = require("./lib/policy");
+const { fullHealthCheck } = require("./lib/health");
 
 const packageRoot = path.resolve(__dirname, "..");
 const workspaceRoot = process.env.SCRUM_WORKSPACE_ROOT || process.cwd();
@@ -78,6 +79,120 @@ function assertAllowedPath(db, targetPath, allowedExternalPaths = [], allowedInt
   }
 }
 
+function repairSkillFolders(healthReport) {
+  const repairs = [];
+
+  for (const skill of healthReport.skills) {
+    if (!fs.existsSync(skill.source)) {
+      continue;
+    }
+
+    if (!skill.exists || (skill.isSymlink && !skill.symlinkValid)) {
+      // Entire tree missing or broken — reinstall all subfolders
+      ensureDir(skill.folder);
+      const entries = fs
+        .readdirSync(skill.source, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory());
+
+      for (const entry of entries) {
+        const sourceDir = path.join(skill.source, entry.name);
+        const targetDir = path.join(skill.folder, entry.name);
+        const result = linkOrCopySkill(sourceDir, targetDir);
+        repairs.push(`${result}: ${targetDir}`);
+      }
+      continue;
+    }
+
+    // Tree exists — repair individual missing skill subfolders
+    for (const name of skill.missingSkills) {
+      const sourceDir = path.join(skill.source, name);
+      const targetDir = path.join(skill.folder, name);
+      const result = linkOrCopySkill(sourceDir, targetDir);
+      repairs.push(`${result}: ${targetDir} (was missing)`);
+    }
+
+    // Repair incomplete skill subfolders (missing files within them)
+    for (const entry of skill.incompleteSkills) {
+      const sourceDir = path.join(skill.source, entry.name);
+      const targetDir = path.join(skill.folder, entry.name);
+      for (const file of entry.missingFiles) {
+        fs.cpSync(path.join(sourceDir, file), path.join(targetDir, file));
+        repairs.push(`restored: ${path.join(targetDir, file)}`);
+      }
+    }
+  }
+
+  return repairs;
+}
+
+function runCheck() {
+  const health = fullHealthCheck(workspaceRoot, packageRoot, dbPath, migrationsDir);
+  process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
+  process.exit(health.status === "healthy" ? 0 : 1);
+}
+
+function runRepair() {
+  const repairs = [];
+
+  // 1. Ensure DB exists and migrations are current
+  let db;
+  try {
+    ({ db } = initDatabase());
+    repairs.push("Database initialized and migrations applied.");
+  } catch (error) {
+    console.error(`Error initializing database: ${error.message}`);
+    process.exit(1);
+  }
+
+  // 2. Seed workspace_config if missing
+  try {
+    if (tableExists(db, "workspace_config")) {
+      const inserted = db
+        .prepare("INSERT OR IGNORE INTO workspace_config (id) VALUES (1)")
+        .run();
+      if (inserted.changes > 0) {
+        repairs.push("Seeded default workspace_config.");
+      }
+    }
+  } catch (error) {
+    repairs.push(`Warning: could not seed workspace_config: ${error.message}`);
+  }
+
+  // 3. Seed extension_install_metadata if missing
+  try {
+    if (tableExists(db, "extension_install_metadata")) {
+      const inserted = db
+        .prepare(
+          "INSERT OR IGNORE INTO extension_install_metadata (id, workspace_root) VALUES (1, ?)"
+        )
+        .run(workspaceRoot);
+      if (inserted.changes > 0) {
+        repairs.push("Seeded extension_install_metadata.");
+      }
+    }
+  } catch (error) {
+    repairs.push(`Warning: could not seed extension_install_metadata: ${error.message}`);
+  }
+
+  db.close();
+
+  // 4. Repair skill folders
+  const health = fullHealthCheck(workspaceRoot, packageRoot, dbPath, migrationsDir);
+  const skillRepairs = repairSkillFolders(health);
+  repairs.push(...skillRepairs);
+
+  // 5. Final health check
+  const postRepair = fullHealthCheck(workspaceRoot, packageRoot, dbPath, migrationsDir);
+
+  const result = {
+    repaired: true,
+    repairs,
+    health: postRepair
+  };
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  process.exit(postRepair.status === "healthy" ? 0 : 1);
+}
+
 async function promptScope() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -103,6 +218,17 @@ async function promptScope() {
 }
 
 async function main() {
+  // Handle --check and --repair flags before interactive prompt
+  const args = process.argv.slice(2);
+  if (args.includes("--check")) {
+    runCheck();
+    return;
+  }
+  if (args.includes("--repair")) {
+    runRepair();
+    return;
+  }
+
   const scope = await promptScope();
   let db;
 

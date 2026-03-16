@@ -20,6 +20,20 @@ This workspace now uses a SQLite-backed workflow:
 - `close-sprint`: close the active sprint, carry unfinished work forward, and write a closeout report.
 - `sync-state`: inspect drift, apply safe repairs, and recover the next recommended command or resumable session.
 
+### Workspace Runtime Commands
+
+- `init-workspace`: bootstrap or verify the workspace runtime (DB, config, skill folders). Idempotent.
+- `show-workspace-health`: read-only health report for the workspace.
+- `get-config [--key <key>]`: read workspace configuration.
+- `set-config --key <key> --value <value>`: update a workspace configuration value.
+- `get-phase [--product-id <id>]`: read the current workflow phase for a product.
+- `set-phase --phase <phase> [--product-id <id>]`: transition the workflow phase for a product.
+
+### Install Flags
+
+- `node scripts/install.js --check`: run a read-only health check without changing anything.
+- `node scripts/install.js --repair`: detect and fix missing DB, stale migrations, broken skill symlinks, and missing config.
+
 ## Claude Code
 
 Claude skills live in `.claude/skills/`.

@@ -14,7 +14,8 @@
   "scripts": {
     "setup": "node scripts/install.js",
     "init-db": "node scripts/init-db.js",
-    "scrum": "node scripts/scrum.js"
+    "scrum": "node scripts/scrum.js",
+    "test": "node --test scripts/tests/phase0.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0"

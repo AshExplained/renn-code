@@ -353,6 +353,100 @@ describe("Phase 2: Design review not required by default", () => {
   });
 });
 
+// --- Fresh-Lens Rule Enforcement ---
+
+describe("Phase 2: Fresh-lens rule blocks self-review", () => {
+  let dir, dbPath;
+
+  before(() => {
+    dir = tmpDir();
+    dbPath = path.join(dir, "delivery", "scrum.db");
+    copySkillFolders(dir);
+    initWorkspace(dir, dbPath);
+    runScrum('create-product --name "FreshLensProd" --idea "test" --goal "test"', dir, dbPath);
+  });
+
+  after(() => cleanup(dir));
+
+  it("blocks review when reviewer session matches creator session", () => {
+    // Create a design session
+    const designSession = runScrum(
+      "start-session --skill design --mode design",
+      dir, dbPath
+    );
+    const designSessionId = designSession.session_id;
+
+    // Create artifact with that session
+    runScrum(
+      `create-design-artifact --file-path "lens.png" --session-id ${designSessionId}`,
+      dir, dbPath
+    );
+    runScrum("submit-design --artifact-id DESIGN-1", dir, dbPath);
+
+    // Try to review with the SAME session — should be blocked
+    const result = runScrumFail(
+      `review-design --artifact-id DESIGN-1 --decision approved --reviewer "self" --reviewer-session-id ${designSessionId}`,
+      dir, dbPath
+    );
+    assert.ok(result.exitCode !== 0, "self-review should fail");
+    assert.ok(
+      result.output.includes("same as the design-generation session"),
+      `should mention self-review block: ${result.output}`
+    );
+  });
+
+  it("allows review when reviewer session differs from creator session", () => {
+    // Create a separate reviewer session
+    const reviewSession = runScrum(
+      "start-session --skill review-design --mode design-review",
+      dir, dbPath
+    );
+    const reviewSessionId = reviewSession.session_id;
+
+    // Review with the different session — should succeed
+    const result = runScrum(
+      `review-design --artifact-id DESIGN-1 --decision approved --reviewer "other" --reviewer-session-id ${reviewSessionId}`,
+      dir, dbPath
+    );
+    assert.equal(result.decision, "approved");
+
+    // Verify the review record has both session references
+    const reviews = runScrum("list-design-reviews --artifact-id DESIGN-1", dir, dbPath);
+    assert.equal(reviews[0].reviewer_session_id, reviewSessionId);
+  });
+});
+
+// --- Extension Approve & Freeze Flow ---
+
+describe("Phase 2: Extension approve-and-freeze completes full lifecycle", () => {
+  let dir, dbPath;
+
+  before(() => {
+    dir = tmpDir();
+    dbPath = path.join(dir, "delivery", "scrum.db");
+    copySkillFolders(dir);
+    initWorkspace(dir, dbPath);
+    runScrum('create-product --name "ExtFreezeProd" --idea "test" --goal "test"', dir, dbPath);
+    runScrum('create-design-artifact --file-path "ext-freeze.png"', dir, dbPath);
+    runScrum("submit-design --artifact-id DESIGN-1", dir, dbPath);
+  });
+
+  after(() => cleanup(dir));
+
+  it("approve via CLI then freeze reaches frozen state", () => {
+    // This simulates what approveAndFreezeDesign does
+    runScrum(
+      'review-design --artifact-id DESIGN-1 --decision approved --reviewer "ext-user"',
+      dir, dbPath
+    );
+    runScrum("freeze-design --artifact-id DESIGN-1", dir, dbPath);
+
+    const artifacts = runScrum("list-design-artifacts", dir, dbPath);
+    const artifact = artifacts.find((a) => a.id === "DESIGN-1");
+    assert.equal(artifact.state, "frozen", "should reach frozen after approve+freeze");
+  });
+});
+
 // --- State Transition Guards ---
 
 describe("Phase 2: Design state transition guards", () => {

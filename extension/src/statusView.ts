@@ -6,6 +6,7 @@ import {
   initializeWorkspace,
   repairWorkspace,
   reviewDesignFromExtension,
+  approveAndFreezeDesign,
 } from "./workspace";
 
 export class StatusViewProvider implements vscode.WebviewViewProvider {
@@ -153,17 +154,30 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const result = reviewDesignFromExtension(
-      this._workspaceRoot,
-      this._packageRoot,
-      artifactId,
-      decision,
-      reviewer,
-      summary
-    );
+    let result;
+    if (decision === "approved") {
+      // Extension approval completes the full cycle: approve + freeze
+      result = approveAndFreezeDesign(
+        this._workspaceRoot,
+        this._packageRoot,
+        artifactId,
+        reviewer
+      );
+    } else {
+      result = reviewDesignFromExtension(
+        this._workspaceRoot,
+        this._packageRoot,
+        artifactId,
+        decision,
+        reviewer,
+        summary
+      );
+    }
+
     if (result.success) {
+      const action = decision === "approved" ? "approved & frozen" : decision;
       vscode.window.showInformationMessage(
-        `Renn Code: Design ${artifactId} — ${decision}.`
+        `Renn Code: Design ${artifactId} — ${action}.`
       );
     } else {
       vscode.window.showErrorMessage(
@@ -300,7 +314,7 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
     const rows = artifacts.map((a) => {
       const stateClass = a.state === "pending_review" ? "review" : a.state === "frozen" ? "done" : "";
       const actions = a.state === "pending_review"
-        ? `<button class="btn-sm" onclick="reviewDesign('${a.id}', 'approved')">Approve</button>
+        ? `<button class="btn-sm" onclick="reviewDesign('${a.id}', 'approved')">Approve &amp; Freeze</button>
            <button class="btn-sm" onclick="reviewDesign('${a.id}', 'changes_requested')">Request Changes</button>`
         : "";
       return `<div class="design-row">

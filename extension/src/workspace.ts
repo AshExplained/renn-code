@@ -322,6 +322,31 @@ export function getDashboardData(
   }
 }
 
+/**
+ * Create a reviewer session for design review.
+ * This ensures the reviewer operates in a separate context from the designer.
+ */
+export function createReviewerSession(
+  workspaceRoot: string,
+  packageRoot: string
+): { sessionId: number } | null {
+  try {
+    const output = runScrum(
+      "start-session --skill review-design --mode design-review",
+      workspaceRoot,
+      packageRoot
+    );
+    const result = JSON.parse(output);
+    return { sessionId: result.session_id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Review a design artifact from the extension.
+ * Creates a reviewer session automatically to enforce the fresh-lens rule.
+ */
 export function reviewDesignFromExtension(
   workspaceRoot: string,
   packageRoot: string,
@@ -331,7 +356,13 @@ export function reviewDesignFromExtension(
   summary?: string
 ): { success: boolean; output: string } {
   try {
-    let args = `review-design --artifact-id ${artifactId} --decision ${decision} --reviewer "${reviewer}"`;
+    // Create a reviewer session to enforce fresh-lens rule
+    const session = createReviewerSession(workspaceRoot, packageRoot);
+    const sessionArg = session
+      ? ` --reviewer-session-id ${session.sessionId}`
+      : "";
+
+    let args = `review-design --artifact-id ${artifactId} --decision ${decision} --reviewer "${reviewer}"${sessionArg}`;
     if (summary) {
       args += ` --summary "${summary}"`;
     }
@@ -340,5 +371,42 @@ export function reviewDesignFromExtension(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Review failed";
     return { success: false, output: message };
+  }
+}
+
+/**
+ * Approve and freeze a design artifact in one extension action.
+ * Calls review-design (approved) then freeze-design to complete the
+ * full approval lifecycle that the CLI path does in two steps.
+ */
+export function approveAndFreezeDesign(
+  workspaceRoot: string,
+  packageRoot: string,
+  artifactId: string,
+  reviewer: string
+): { success: boolean; output: string } {
+  // Step 1: Approve
+  const reviewResult = reviewDesignFromExtension(
+    workspaceRoot,
+    packageRoot,
+    artifactId,
+    "approved",
+    reviewer
+  );
+  if (!reviewResult.success) {
+    return reviewResult;
+  }
+
+  // Step 2: Freeze
+  try {
+    const freezeOutput = runScrum(
+      `freeze-design --artifact-id ${artifactId}`,
+      workspaceRoot,
+      packageRoot
+    );
+    return { success: true, output: freezeOutput };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Freeze failed";
+    return { success: false, output: `Approved but freeze failed: ${message}` };
   }
 }

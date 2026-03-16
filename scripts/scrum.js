@@ -3056,7 +3056,8 @@ function createDesignArtifact(db, argv) {
     "--linked-sprint-id": { key: "linkedSprintId", type: "value" },
     "--linked-story-id": { key: "linkedStoryId", type: "value" },
     "--notes": { key: "notes", type: "value" },
-    "--product-id": { key: "productId", type: "value" }
+    "--product-id": { key: "productId", type: "value" },
+    "--session-id": { key: "sessionId", type: "value" }
   });
   requireFields(options, "filePath");
 
@@ -3066,8 +3067,8 @@ function createDesignArtifact(db, argv) {
   db.prepare(
     `INSERT INTO design_artifacts (
         id, product_id, file_path, artifact_type, state, content_hash,
-        notes, linked_story_id, linked_sprint_id
-     ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)`
+        notes, linked_story_id, linked_sprint_id, creator_session_id
+     ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`
   ).run(
     id,
     productId,
@@ -3076,7 +3077,8 @@ function createDesignArtifact(db, argv) {
     options.contentHash || null,
     options.notes || null,
     options.linkedStoryId || null,
-    options.linkedSprintId || null
+    options.linkedSprintId || null,
+    options.sessionId ? Number(options.sessionId) : null
   );
 
   insertAudit(db, "design_artifacts", id, "create", "", options.filePath, "orchestrator");
@@ -3131,7 +3133,7 @@ function reviewDesign(db, argv) {
   }
 
   const artifact = db
-    .prepare("SELECT id, state, revision, product_id FROM design_artifacts WHERE id = ?")
+    .prepare("SELECT id, state, revision, product_id, creator_session_id FROM design_artifacts WHERE id = ?")
     .get(options.artifactId);
   if (!artifact) {
     die(`Design artifact ${options.artifactId} does not exist`);
@@ -3142,6 +3144,18 @@ function reviewDesign(db, argv) {
 
   if (options.decision === "changes_requested" && !options.summary) {
     die("review-design changes_requested requires --summary");
+  }
+
+  // Fresh-lens rule: block self-review when reviewer session matches creator session
+  if (
+    artifact.creator_session_id &&
+    options.reviewerSessionId &&
+    Number(options.reviewerSessionId) === artifact.creator_session_id
+  ) {
+    die(
+      `Design review blocked: reviewer session ${options.reviewerSessionId} is the same as the ` +
+      `design-generation session. Design review must happen in a separate reviewer context.`
+    );
   }
 
   const reviewId = nextId(db, "DREV", "design_reviews");
@@ -3234,7 +3248,8 @@ function supersedeDesign(db, argv) {
     "--artifact-id": { key: "artifactId", type: "value" },
     "--content-hash": { key: "contentHash", type: "value" },
     "--file-path": { key: "filePath", type: "value" },
-    "--notes": { key: "notes", type: "value" }
+    "--notes": { key: "notes", type: "value" },
+    "--session-id": { key: "sessionId", type: "value" }
   });
   requireFields(options, "artifactId");
 
@@ -3259,8 +3274,9 @@ function supersedeDesign(db, argv) {
     db.prepare(
       `INSERT INTO design_artifacts (
           id, product_id, file_path, artifact_type, state, revision,
-          parent_artifact_id, content_hash, notes, linked_story_id, linked_sprint_id
-       ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`
+          parent_artifact_id, content_hash, notes, linked_story_id, linked_sprint_id,
+          creator_session_id
+       ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       newId,
       old.product_id,
@@ -3271,7 +3287,8 @@ function supersedeDesign(db, argv) {
       options.contentHash || null,
       options.notes || null,
       old.linked_story_id,
-      old.linked_sprint_id
+      old.linked_sprint_id,
+      options.sessionId ? Number(options.sessionId) : null
     );
 
     insertAudit(db, "design_artifacts", options.artifactId, "state", "frozen", "superseded", "orchestrator");

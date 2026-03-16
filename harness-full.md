@@ -9,7 +9,7 @@ This diagram shows the recommended merged system:
 
 ```mermaid
 ---
-title: Unified AI Product Harness (DB-First + VS Code Companion)
+title: Unified AI Product Harness (DB-First + VS Code Mission Control)
 ---
 flowchart TD
     U["User / Sponsor"] --> VS["VS Code IDE"]
@@ -56,7 +56,7 @@ flowchart TD
     subgraph STATE["Authoritative State: SQLite"]
         DB["delivery/scrum.db"]
         CFG["workspace_config<br/>CLI, models, project type,<br/>planning_horizon, governance_mode,<br/>review_granularity, execution defaults"]
-        WF["workflow_phase<br/>init -> research -> spec -> design -> planning -> building -> review -> closeout -> feedback -> resume -> complete (terminal)"]
+        WF["workflow_phase<br/>init -> research -> spec -> design -> planning -> building -> review -> closeout -> feedback -> resume -> complete (terminal state)"]
         MB["master_board<br/>product status, active sprint, next command"]
         EP["epics / stories / tasks / dependencies"]
         RUNS["session_log / task_leases / policy_events"]
@@ -186,7 +186,7 @@ These still exist and still matter, but they are outputs and references tracked 
 - the harness runner leases work from SQLite instead of scanning `feature_list.json`
 - planning produces epics, stories, tasks, dependencies, and milestones in the DB instead of a flat feature file
 - detailed story and task planning should focus on the active sprint; future work should usually remain at epic or backlog level until it is pulled into the next sprint
-- `/start`, `/resume`, `/status`, `/design`, `/run-sprint`, and `/quick` become DB-backed workflow commands
+- `/start`, `/resume`, `/status`, `/design`, `/review-design`, `/run-sprint`, and `/quick` become DB-backed workflow commands
 - the VS Code extension becomes the primary product shell and mission-control surface for initialized workspaces
 - the VS Code extension reads both design files and DB status instead of only rendering `.design.json`
 - workspace-local skill folders are installed into each project so terminal-driven agent tools can read the same project-scoped instructions
@@ -197,7 +197,7 @@ These still exist and still matter, but they are outputs and references tracked 
 
 - the end-to-end lifecycle from idea to research to spec to design to execution
 - CLI-agnostic execution across Claude, Codex, and Gemini
-- the VS Code companion concept
+- the VS Code extension concept
 - the DB-backed planning, review, fix-task, closeout, and feedback loops from `scrum-test`
 
 ## Slash Commands
@@ -246,7 +246,7 @@ The merged system should expose one unified skill surface inside VS Code termina
 
 - all commands read and write through `ai-scrum`
 - all authoritative workflow state should live in the DB, and generated files should be created or refreshed through DB-backed commands with their resulting artifact state recorded back into the DB
-- all commands can be surfaced in VS Code terminal and optionally reflected in the companion extension
+- all commands can be surfaced in VS Code terminals and in the extension UI
 - `/status` and `/resume` should rely on DB-derived `next_command`, not ad hoc file inspection
 - `/start` should be the one-time bootstrap command that also performs the initial product setup
 - `/design` should create or update design artifacts and move them into a reviewable state
@@ -1111,33 +1111,34 @@ Example styles:
 
 ## Sequential User Journey
 
-1. The user opens the project in VS Code and runs `/start` in the integrated terminal.
-2. The system loads workspace config, initializes or verifies the SQLite database, and determines whether the work is greenfield or brownfield.
-3. For brownfield work, the system performs discovery and produces `CODEBASE.md` as a reference artifact.
-4. The research flow gathers product context, domain constraints, and targeted clarifications from the user.
-5. The system writes `requirements_doc.md` and records the workflow phase in the database.
-6. The spec flow converts requirements into `app_spec.md`.
-7. The audit flow compares requirements and spec, creates `audit_report.md` if needed, and loops until the spec is approved.
-8. The design flow generates `design_system.json` and `*.design.json` files under `ui_designs/`.
-9. The user reviews designs in the VS Code companion extension when available, or through the CLI fallback when it is not, and records the decision through `/review-design`.
-10. The system freezes approved design artifacts, indexes them in the database, and advances the workflow to planning.
-11. `/start` creates the initial product record and planning container as part of project bootstrap, so no separate `/init-product` step is required in the normal flow.
-12. The user runs `/plan-epics` to create major epics, priorities, and dependencies.
-13. The user runs `/plan-sprint` to create exactly one active sprint with detailed stories, tasks, dependencies, and acceptance criteria.
-14. Future work remains in the backlog or at light sprint-placeholder level until it is close enough to execute.
-15. The user checks `/status` to see the current phase, sprint, review queue, and recommended next command.
-16. The user runs `/run-sprint` to start or resume the automation loop for the active sprint.
-17. `/run-sprint` applies governance policy to decide whether to continue automatically, notify, or pause.
-18. The runner leases ready tasks from the database and launches non-interactive coding sessions in small batches.
-19. Each coding session implements work, runs tests, captures evidence, updates task state, and commits progress.
-20. Submitted work enters review and acceptance gates tracked in the database.
-21. The user or agent runs `/review-sprint` to approve work or request changes.
-22. If review fails, the system creates fix tasks and routes them back into the same sprint backlog when appropriate.
-23. If work is interrupted or state drifts, the user runs `/sync-state` to repair safe inconsistencies and recover the next step.
-24. Once sprint work is complete, the system moves into closeout; this may happen automatically only when autonomy policy allows it, otherwise the user runs `/close-sprint`.
-25. After human review, UAT, or sponsor input, the user runs `/add-feedback` to log bugs, changes, and follow-up requests.
-26. The new feedback is linked to epics, stories, tasks, or bugs in the database.
-27. The user starts the next cycle by running `/plan-sprint` again for the next sprint, or allows auto-chaining to do so when policy permits, with `/resume` and `/status` always available to re-enter the flow cleanly.
+1. The user opens the project in VS Code.
+2. The extension detects whether the workspace is already harness-enabled and either opens mission control or offers one-click initialization.
+3. If the workspace is not initialized, the user initializes it through the extension or runs `/start` in the integrated terminal.
+4. The system loads workspace config, initializes or verifies the SQLite database, creates the initial product record, and determines whether the work is greenfield or brownfield.
+5. For brownfield work, the system performs discovery and produces `CODEBASE.md` as a reference artifact.
+6. The research flow gathers product context, domain constraints, and targeted clarifications from the user.
+7. The system writes `requirements_doc.md` and records the workflow phase in the database.
+8. The spec flow converts requirements into `app_spec.md`.
+9. The audit flow compares requirements and spec, creates `audit_report.md` if needed, and loops until the spec is approved.
+10. The design flow generates `design_system.json` and `*.design.json` files under `ui_designs/`.
+11. The user reviews designs in the VS Code extension when available, or through the CLI fallback when it is not, and records the decision through `/review-design`.
+12. The system freezes approved design artifacts, indexes them in the database, and advances the workflow to planning.
+13. The user runs `/plan-epics` to create major epics, priorities, and dependencies.
+14. The user runs `/plan-sprint` to create exactly one active sprint with detailed stories, tasks, dependencies, and acceptance criteria.
+15. Future work remains in the backlog or at light sprint-placeholder level until it is close enough to execute.
+16. The user checks `/status` to see the current phase, sprint, review queue, and recommended next command.
+17. The user runs `/run-sprint` to start or resume the automation loop for the active sprint.
+18. `/run-sprint` applies governance policy to decide whether to continue automatically, notify, or pause.
+19. The runner leases ready tasks from the database and launches non-interactive coding sessions in small batches.
+20. Each coding session implements work, runs tests, captures evidence, updates task state, and commits progress.
+21. Submitted work enters review and acceptance gates tracked in the database.
+22. The user or agent runs `/review-sprint` to approve work or request changes.
+23. If review fails, the system creates fix tasks and routes them back into the same sprint backlog when appropriate.
+24. If work is interrupted or state drifts, the user runs `/sync-state` to repair safe inconsistencies and recover the next step.
+25. Once sprint work is complete, the system moves into closeout; this may happen automatically only when autonomy policy allows it, otherwise the user runs `/close-sprint`.
+26. After human review, UAT, or sponsor input, the user runs `/add-feedback` to log bugs, changes, and follow-up requests.
+27. The new feedback is linked to epics, stories, tasks, or bugs in the database.
+28. The user starts the next cycle by running `/plan-sprint` again for the next sprint, or allows auto-chaining to do so when policy permits, with `/resume` and `/status` always available to re-enter the flow cleanly.
 
 ## Quick Change Journey
 
@@ -1151,8 +1152,9 @@ Example styles:
 ## Suggested Build Order
 
 1. Add phase/artifact/config tables to the SQLite schema.
-2. Implement DB-backed `/start`, `/resume`, `/status`, `/design`, and `/run-sprint`.
-3. Port `myharness` prompts and lifecycle logic to call `ai-scrum`.
-4. Change the automated runner to lease DB tasks instead of reading `feature_list.json`.
-5. Build the VS Code extension against DB + artifact files.
-6. Remove dual-write file state once the DB path is stable.
+2. Implement DB-backed `/start`, `/resume`, `/status`, `/design`, `/review-design`, and `/run-sprint`.
+3. Build a basic VS Code extension shell for workspace detection, one-click initialization, status, and design review.
+4. Port `myharness` prompts and lifecycle logic to call `ai-scrum`.
+5. Change the automated runner to lease DB tasks instead of reading `feature_list.json`.
+6. Expand the VS Code extension into full mission control against DB + artifact files.
+7. Remove dual-write file state once the DB path is stable.

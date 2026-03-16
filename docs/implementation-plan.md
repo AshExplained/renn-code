@@ -209,6 +209,7 @@ Make UI/design work first-class, reviewable, and gated before implementation.
 - design review works in both extension and CLI
 - design freeze is enforceable and traceable
 - implementation gating honors design state
+- residual note: Phase 2 is acceptable with CLI/root test coverage plus code inspection for the extension design-review flow, but fuller extension-UI interaction testing should be added during later mission-control hardening
 
 ## Phase 3: Sprint Planning And Quick Path
 

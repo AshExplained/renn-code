@@ -11,9 +11,7 @@
     "Other"
   ],
   "activationEvents": [
-    "workspaceContains:delivery/scrum.db",
-    "workspaceContains:.agents/skills",
-    "workspaceContains:.claude/skills"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

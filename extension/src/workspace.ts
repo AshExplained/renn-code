@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import { execSync } from "child_process";
@@ -65,14 +64,29 @@ export interface DashboardData {
   health: WorkspaceHealth;
 }
 
-function findPackageRoot(workspaceRoot: string): string | null {
-  // Look for the harness package.json with ai-scrum bin entry
+/**
+ * Locate the harness package root containing scripts/scrum.js.
+ *
+ * Search order:
+ * 1. Workspace-local (workspace IS the harness repo)
+ * 2. node_modules dependency inside the workspace
+ * 3. Extension install location (extension/ is a sibling of scripts/)
+ *
+ * The third fallback is the key Phase 1 enabler: it lets the globally
+ * installed extension initialize arbitrary workspaces without requiring
+ * the package to already be present in the workspace.
+ */
+export function findPackageRoot(
+  workspaceRoot: string,
+  extensionPath?: string
+): string | null {
+  // 1. Workspace IS the harness repo
   const localScrum = path.join(workspaceRoot, "scripts", "scrum.js");
   if (fs.existsSync(localScrum)) {
     return workspaceRoot;
   }
 
-  // Check node_modules for installed package
+  // 2. Installed as a workspace dependency
   const nmScrum = path.join(
     workspaceRoot,
     "node_modules",
@@ -82,6 +96,26 @@ function findPackageRoot(workspaceRoot: string): string | null {
   );
   if (fs.existsSync(nmScrum)) {
     return path.join(workspaceRoot, "node_modules", "ai-scrum-workflow");
+  }
+
+  // 3. Resolve from the extension's own install location.
+  //    The extension lives at <packageRoot>/extension/out/extension.js,
+  //    so the package root is two levels up from __dirname at runtime.
+  //    When extensionPath is provided (e.g. context.extensionPath), use it.
+  if (extensionPath) {
+    const fromExtension = path.resolve(extensionPath, "..");
+    const candidate = path.join(fromExtension, "scripts", "scrum.js");
+    if (fs.existsSync(candidate)) {
+      return fromExtension;
+    }
+  }
+
+  // 4. Fallback: resolve relative to this compiled file's location
+  //    (out/workspace.js → extension/ → packageRoot/)
+  const selfResolved = path.resolve(__dirname, "..", "..");
+  const selfCandidate = path.join(selfResolved, "scripts", "scrum.js");
+  if (fs.existsSync(selfCandidate)) {
+    return selfResolved;
   }
 
   return null;
@@ -101,14 +135,17 @@ function runScrum(
   }).trim();
 }
 
-export function detectWorkspace(workspaceRoot: string): {
+export function detectWorkspace(
+  workspaceRoot: string,
+  extensionPath?: string
+): {
   initialized: boolean;
   packageRoot: string | null;
   dbExists: boolean;
 } {
   const dbPath = path.join(workspaceRoot, "delivery", "scrum.db");
   const dbExists = fs.existsSync(dbPath);
-  const packageRoot = findPackageRoot(workspaceRoot);
+  const packageRoot = findPackageRoot(workspaceRoot, extensionPath);
 
   return {
     initialized: dbExists,
@@ -136,6 +173,14 @@ export function initializeWorkspace(
   try {
     const initDbJs = path.join(packageRoot, "scripts", "init-db.js");
     execSync(`node "${initDbJs}"`, {
+      cwd: workspaceRoot,
+      env: { ...process.env, SCRUM_WORKSPACE_ROOT: workspaceRoot },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+
+    const installJs = path.join(packageRoot, "scripts", "install.js");
+    execSync(`node "${installJs}" --repair`, {
       cwd: workspaceRoot,
       env: { ...process.env, SCRUM_WORKSPACE_ROOT: workspaceRoot },
       encoding: "utf8",

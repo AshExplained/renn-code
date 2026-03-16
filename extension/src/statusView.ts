@@ -3,7 +3,6 @@ import {
   DashboardData,
   detectWorkspace,
   getDashboardData,
-  getWorkspaceHealth,
   initializeWorkspace,
   repairWorkspace,
 } from "./workspace";
@@ -14,14 +13,17 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _workspaceRoot: string;
   private _packageRoot: string | null;
+  private _extensionPath: string;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
     workspaceRoot: string,
-    packageRoot: string | null
+    packageRoot: string | null,
+    extensionPath: string
   ) {
     this._workspaceRoot = workspaceRoot;
     this._packageRoot = packageRoot;
+    this._extensionPath = extensionPath;
   }
 
   public resolveWebviewView(
@@ -38,10 +40,10 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
         case "initialize":
-          await this._handleInitialize();
+          await this.handleInitialize();
           break;
         case "repair":
-          await this._handleRepair();
+          await this.handleRepair();
           break;
         case "refresh":
           this.refresh();
@@ -57,7 +59,7 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const detection = detectWorkspace(this._workspaceRoot);
+    const detection = detectWorkspace(this._workspaceRoot, this._extensionPath);
     this._packageRoot = detection.packageRoot;
 
     if (!detection.initialized || !this._packageRoot) {
@@ -75,11 +77,15 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
     this._view.webview.html = this._getDashboardHtml(data);
   }
 
-  private async _handleInitialize(): Promise<void> {
+  public async handleInitialize(): Promise<void> {
+    // Re-detect with extensionPath so we find the package even in empty workspaces
+    const detection = detectWorkspace(this._workspaceRoot, this._extensionPath);
+    this._packageRoot = detection.packageRoot;
+
     if (!this._packageRoot) {
       vscode.window.showErrorMessage(
         "Renn Code: Cannot find the harness package. " +
-          "Ensure the project has scripts/scrum.js or the ai-scrum-workflow package installed."
+          "Ensure the extension is installed from the Renn Code package."
       );
       return;
     }
@@ -97,7 +103,10 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
     this.refresh();
   }
 
-  private async _handleRepair(): Promise<void> {
+  public async handleRepair(): Promise<void> {
+    const detection = detectWorkspace(this._workspaceRoot, this._extensionPath);
+    this._packageRoot = detection.packageRoot;
+
     if (!this._packageRoot) {
       vscode.window.showErrorMessage(
         "Renn Code: Cannot find the harness package."
@@ -147,10 +156,6 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
       font-size: 13px;
     }
     .btn:hover { background: var(--vscode-button-hoverBackground); }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
     .hint {
       margin-top: 16px;
       padding: 8px;
@@ -168,11 +173,13 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
       ? `<button class="btn" onclick="initialize()">Initialize Harness In This Project</button>`
       : `<p><strong>Harness package not found.</strong></p>
          <div class="hint">
-           Run <code>npm install ai-scrum-workflow</code> or ensure <code>scripts/scrum.js</code> exists in this project.
+           Ensure the Renn Code extension is installed from the harness package, or run
+           <code>npm install ai-scrum-workflow</code> in this project.
          </div>`
   }
   <div class="hint">
-    Or run <code>node scripts/install.js</code> in the integrated terminal.
+    You can also run <code>node scripts/install.js</code> in the integrated terminal,
+    or use the Command Palette: <strong>Renn Code: Initialize Harness In This Project</strong>.
   </div>
   <script>
     const vscode = acquireVsCodeApi();

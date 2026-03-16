@@ -10,12 +10,13 @@ export function activate(context: vscode.ExtensionContext): void {
     return;
   }
 
-  const detection = detectWorkspace(workspaceRoot);
+  const detection = detectWorkspace(workspaceRoot, context.extensionPath);
 
   statusProvider = new StatusViewProvider(
     context.extensionUri,
     workspaceRoot,
-    detection.packageRoot
+    detection.packageRoot,
+    context.extensionPath
   );
 
   context.subscriptions.push(
@@ -26,8 +27,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("rennCode.initializeWorkspace", () => {
-      statusProvider?.refresh();
+    vscode.commands.registerCommand("rennCode.initializeWorkspace", async () => {
+      await statusProvider?.handleInitialize();
     })
   );
 
@@ -38,8 +39,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("rennCode.repairWorkspace", () => {
-      statusProvider?.refresh();
+    vscode.commands.registerCommand("rennCode.repairWorkspace", async () => {
+      await statusProvider?.handleRepair();
     })
   );
 }

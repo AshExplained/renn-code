@@ -5,6 +5,7 @@ import {
   getDashboardData,
   initializeWorkspace,
   repairWorkspace,
+  reviewDesignFromExtension,
 } from "./workspace";
 
 export class StatusViewProvider implements vscode.WebviewViewProvider {
@@ -47,6 +48,13 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
           break;
         case "refresh":
           this.refresh();
+          break;
+        case "review-design":
+          await this._handleDesignReview(
+            message.artifactId,
+            message.decision,
+            message.summary
+          );
           break;
       }
     });
@@ -122,6 +130,44 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
     } else {
       vscode.window.showErrorMessage(
         `Renn Code: Repair failed — ${result.output}`
+      );
+    }
+    this.refresh();
+  }
+
+  private async _handleDesignReview(
+    artifactId: string,
+    decision: string,
+    summary?: string
+  ): Promise<void> {
+    if (!this._packageRoot) {
+      vscode.window.showErrorMessage("Renn Code: Cannot find the harness package.");
+      return;
+    }
+
+    const reviewer = await vscode.window.showInputBox({
+      prompt: "Reviewer name",
+      placeHolder: "Enter your name for the review record",
+    });
+    if (!reviewer) {
+      return;
+    }
+
+    const result = reviewDesignFromExtension(
+      this._workspaceRoot,
+      this._packageRoot,
+      artifactId,
+      decision,
+      reviewer,
+      summary
+    );
+    if (result.success) {
+      vscode.window.showInformationMessage(
+        `Renn Code: Design ${artifactId} — ${decision}.`
+      );
+    } else {
+      vscode.window.showErrorMessage(
+        `Renn Code: Design review failed — ${result.output}`
       );
     }
     this.refresh();
@@ -242,6 +288,36 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
 </html>`;
   }
 
+  private _getDesignSection(data: DashboardData): string {
+    const artifacts = data.designArtifacts;
+    if (!artifacts || artifacts.length === 0) {
+      return `<div class="section">
+        <div class="label">Design Artifacts</div>
+        <div class="value dim">No design artifacts</div>
+      </div>`;
+    }
+
+    const rows = artifacts.map((a) => {
+      const stateClass = a.state === "pending_review" ? "review" : a.state === "frozen" ? "done" : "";
+      const actions = a.state === "pending_review"
+        ? `<button class="btn-sm" onclick="reviewDesign('${a.id}', 'approved')">Approve</button>
+           <button class="btn-sm" onclick="reviewDesign('${a.id}', 'changes_requested')">Request Changes</button>`
+        : "";
+      return `<div class="design-row">
+        <span class="design-id">${escapeHtml(a.id)}</span>
+        <span class="count ${stateClass}">${a.state}</span>
+        <span class="design-path">${escapeHtml(a.file_path)}</span>
+        <span class="design-rev">rev ${a.revision}</span>
+        ${actions}
+      </div>`;
+    }).join("");
+
+    return `<div class="section">
+      <div class="label">Design Artifacts</div>
+      ${rows}
+    </div>`;
+  }
+
   private _getDashboardHtml(data: DashboardData): string {
     const product = data.product;
     const phase = data.phase;
@@ -327,6 +403,28 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
       font-size: 12px;
     }
     .btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .btn-sm {
+      padding: 2px 6px;
+      margin-left: 4px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 2px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .btn-sm:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .design-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+      flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .design-id { font-family: var(--vscode-editor-font-family); font-weight: 500; }
+    .design-path { color: var(--vscode-descriptionForeground); flex: 1; }
+    .design-rev { color: var(--vscode-descriptionForeground); font-size: 11px; }
     hr {
       border: none;
       border-top: 1px solid var(--vscode-widget-border);
@@ -357,11 +455,22 @@ export class StatusViewProvider implements vscode.WebviewViewProvider {
   ${sprintSection}
 
   <hr>
+
+  ${this._getDesignSection(data)}
+
+  <hr>
   <button class="btn" onclick="refresh()">Refresh</button>
 
   <script>
     const vscode = acquireVsCodeApi();
     function refresh() { vscode.postMessage({ command: 'refresh' }); }
+    function reviewDesign(artifactId, decision) {
+      const summary = decision === 'changes_requested'
+        ? prompt('What changes are needed?')
+        : undefined;
+      if (decision === 'changes_requested' && !summary) return;
+      vscode.postMessage({ command: 'review-design', artifactId, decision, summary });
+    }
   </script>
 </body>
 </html>`;

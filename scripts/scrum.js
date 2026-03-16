@@ -219,6 +219,41 @@ const COMMAND_HELP = {
     "",
     "Transition the workflow phase for a product.",
     "Phases: init, research, spec, design, planning, building, review, closeout, feedback, resume, complete"
+  ].join("\n"),
+  "create-design-artifact": [
+    "Usage: ai-scrum create-design-artifact --file-path <path> [--product-id <id>] [--artifact-type <type>] [--content-hash <hash>] [--notes <text>] [--linked-story-id <id>] [--linked-sprint-id <id>]",
+    "",
+    "Create a design artifact in draft state."
+  ].join("\n"),
+  "submit-design": [
+    "Usage: ai-scrum submit-design --artifact-id <id> [--content-hash <hash>]",
+    "",
+    "Submit a draft or changes_requested design artifact for review (moves to pending_review)."
+  ].join("\n"),
+  "review-design": [
+    "Usage: ai-scrum review-design --artifact-id <id> --decision approved|changes_requested|skip_design [--reviewer <name>] [--reviewer-session-id <id>] [--summary <text>]",
+    "",
+    "Review a pending design artifact. The reviewer should be different from the designer."
+  ].join("\n"),
+  "freeze-design": [
+    "Usage: ai-scrum freeze-design --artifact-id <id> [--freeze-note <text>]",
+    "",
+    "Freeze an approved design artifact, locking it as the implementation reference."
+  ].join("\n"),
+  "supersede-design": [
+    "Usage: ai-scrum supersede-design --artifact-id <id> [--file-path <path>] [--content-hash <hash>] [--notes <text>]",
+    "",
+    "Supersede a frozen design with a new draft revision. The old design moves to superseded."
+  ].join("\n"),
+  "list-design-artifacts": [
+    "Usage: ai-scrum list-design-artifacts [--product-id <id>] [--state <state>]",
+    "",
+    "List design artifacts, optionally filtered by state."
+  ].join("\n"),
+  "list-design-reviews": [
+    "Usage: ai-scrum list-design-reviews --artifact-id <id>",
+    "",
+    "List all reviews for a design artifact."
   ].join("\n")
 };
 
@@ -1183,6 +1218,14 @@ function startRun(db, argv) {
   requireFields(options, "agent");
 
   const productId = resolveProductId(db, options.productId);
+
+  // Design-freeze gate: block sprint execution when design review is required
+  // but unfrozen artifacts exist.
+  const designGate = checkDesignFreezeGate(db, productId);
+  if (!designGate.passed) {
+    die(designGate.reason);
+  }
+
   const requestedMode = options.mode || "auto";
   if (!["auto", "solo", "parallel", "coordinated"].includes(requestedMode)) {
     die("start-run mode must be auto, solo, parallel, or coordinated");
@@ -2845,7 +2888,8 @@ const WORKSPACE_CONFIG_KEYS = new Set([
   "review_granularity",
   "cli_path",
   "model_preferences",
-  "execution_defaults"
+  "execution_defaults",
+  "design_review_required"
 ]);
 
 const WORKFLOW_PHASES = new Set([
@@ -2997,6 +3041,323 @@ function setPhase(db, argv) {
   printJson({ product_id: productId, phase: options.phase, status: "updated" });
 }
 
+// --- Design Workflow Commands (Phase 2) ---
+
+const DESIGN_STATES = new Set([
+  "draft", "pending_review", "changes_requested",
+  "approved", "frozen", "superseded"
+]);
+
+function createDesignArtifact(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-type": { key: "artifactType", type: "value" },
+    "--content-hash": { key: "contentHash", type: "value" },
+    "--file-path": { key: "filePath", type: "value" },
+    "--linked-sprint-id": { key: "linkedSprintId", type: "value" },
+    "--linked-story-id": { key: "linkedStoryId", type: "value" },
+    "--notes": { key: "notes", type: "value" },
+    "--product-id": { key: "productId", type: "value" }
+  });
+  requireFields(options, "filePath");
+
+  const productId = resolveProductId(db, options.productId);
+  const id = nextId(db, "DESIGN", "design_artifacts");
+
+  db.prepare(
+    `INSERT INTO design_artifacts (
+        id, product_id, file_path, artifact_type, state, content_hash,
+        notes, linked_story_id, linked_sprint_id
+     ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)`
+  ).run(
+    id,
+    productId,
+    options.filePath,
+    options.artifactType || "design",
+    options.contentHash || null,
+    options.notes || null,
+    options.linkedStoryId || null,
+    options.linkedSprintId || null
+  );
+
+  insertAudit(db, "design_artifacts", id, "create", "", options.filePath, "orchestrator");
+  printJson({ id, product_id: productId, state: "draft", status: "created" });
+}
+
+function submitDesign(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-id": { key: "artifactId", type: "value" },
+    "--content-hash": { key: "contentHash", type: "value" }
+  });
+  requireFields(options, "artifactId");
+
+  const artifact = db
+    .prepare("SELECT id, state, revision FROM design_artifacts WHERE id = ?")
+    .get(options.artifactId);
+  if (!artifact) {
+    die(`Design artifact ${options.artifactId} does not exist`);
+  }
+  if (!["draft", "changes_requested"].includes(artifact.state)) {
+    die(`Design artifact ${options.artifactId} must be in draft or changes_requested to submit (current: ${artifact.state})`);
+  }
+
+  const sets = ["state = 'pending_review'", "updated_at = datetime('now')"];
+  const params = [];
+  if (options.contentHash) {
+    sets.push("content_hash = ?");
+    params.push(options.contentHash);
+  }
+  params.push(options.artifactId);
+
+  db.prepare(
+    `UPDATE design_artifacts SET ${sets.join(", ")} WHERE id = ?`
+  ).run(...params);
+
+  insertAudit(db, "design_artifacts", options.artifactId, "state", artifact.state, "pending_review", "orchestrator");
+  printJson({ id: options.artifactId, state: "pending_review", status: "submitted" });
+}
+
+function reviewDesign(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-id": { key: "artifactId", type: "value" },
+    "--decision": { key: "decision", type: "value" },
+    "--reviewer": { key: "reviewer", type: "value" },
+    "--reviewer-session-id": { key: "reviewerSessionId", type: "value" },
+    "--summary": { key: "summary", type: "value" }
+  });
+  requireFields(options, "artifactId", "decision");
+
+  if (!["approved", "changes_requested", "skip_design"].includes(options.decision)) {
+    die("review-design decision must be approved, changes_requested, or skip_design");
+  }
+
+  const artifact = db
+    .prepare("SELECT id, state, revision, product_id FROM design_artifacts WHERE id = ?")
+    .get(options.artifactId);
+  if (!artifact) {
+    die(`Design artifact ${options.artifactId} does not exist`);
+  }
+  if (artifact.state !== "pending_review") {
+    die(`Design artifact ${options.artifactId} must be in pending_review to review (current: ${artifact.state})`);
+  }
+
+  if (options.decision === "changes_requested" && !options.summary) {
+    die("review-design changes_requested requires --summary");
+  }
+
+  const reviewId = nextId(db, "DREV", "design_reviews");
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO design_reviews (id, artifact_id, reviewer, decision, summary, reviewer_session_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      reviewId,
+      options.artifactId,
+      options.reviewer || null,
+      options.decision,
+      options.summary || null,
+      options.reviewerSessionId ? Number(options.reviewerSessionId) : null
+    );
+
+    let newState;
+    if (options.decision === "approved") {
+      newState = "approved";
+    } else if (options.decision === "changes_requested") {
+      newState = "changes_requested";
+    } else {
+      newState = "approved";
+    }
+
+    db.prepare(
+      `UPDATE design_artifacts
+       SET state = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(newState, options.artifactId);
+
+    insertAudit(db, "design_artifacts", options.artifactId, "state", artifact.state, newState, options.reviewer || "reviewer");
+  });
+  tx();
+
+  printJson({
+    review_id: reviewId,
+    artifact_id: options.artifactId,
+    decision: options.decision,
+    state: options.decision === "changes_requested" ? "changes_requested" : "approved",
+    status: "reviewed"
+  });
+}
+
+function freezeDesign(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-id": { key: "artifactId", type: "value" },
+    "--freeze-note": { key: "freezeNote", type: "value" }
+  });
+  requireFields(options, "artifactId");
+
+  const artifact = db
+    .prepare("SELECT id, state, revision FROM design_artifacts WHERE id = ?")
+    .get(options.artifactId);
+  if (!artifact) {
+    die(`Design artifact ${options.artifactId} does not exist`);
+  }
+  if (artifact.state !== "approved") {
+    die(`Design artifact ${options.artifactId} must be approved before freezing (current: ${artifact.state})`);
+  }
+
+  db.prepare(
+    `UPDATE design_artifacts
+     SET state = 'frozen', updated_at = datetime('now')
+     WHERE id = ?`
+  ).run(options.artifactId);
+
+  // Record freeze metadata on the latest approval review
+  const latestReview = db
+    .prepare(
+      `SELECT id FROM design_reviews
+       WHERE artifact_id = ? AND decision = 'approved'
+       ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(options.artifactId);
+  if (latestReview) {
+    db.prepare(
+      `UPDATE design_reviews
+       SET frozen_at = datetime('now'), frozen_revision = ?, summary = COALESCE(summary, '') || CASE WHEN ? IS NOT NULL AND ? != '' THEN ' | Freeze note: ' || ? ELSE '' END
+       WHERE id = ?`
+    ).run(artifact.revision, options.freezeNote, options.freezeNote, options.freezeNote, latestReview.id);
+  }
+
+  insertAudit(db, "design_artifacts", options.artifactId, "state", "approved", "frozen", "orchestrator");
+  printJson({ id: options.artifactId, state: "frozen", revision: artifact.revision, status: "frozen" });
+}
+
+function supersedeDesign(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-id": { key: "artifactId", type: "value" },
+    "--content-hash": { key: "contentHash", type: "value" },
+    "--file-path": { key: "filePath", type: "value" },
+    "--notes": { key: "notes", type: "value" }
+  });
+  requireFields(options, "artifactId");
+
+  const old = db
+    .prepare("SELECT id, state, revision, product_id, file_path, artifact_type, linked_story_id, linked_sprint_id FROM design_artifacts WHERE id = ?")
+    .get(options.artifactId);
+  if (!old) {
+    die(`Design artifact ${options.artifactId} does not exist`);
+  }
+  if (old.state !== "frozen") {
+    die(`Only frozen designs can be superseded (current: ${old.state})`);
+  }
+
+  const newId = nextId(db, "DESIGN", "design_artifacts");
+  const tx = db.transaction(() => {
+    // Mark old as superseded
+    db.prepare(
+      `UPDATE design_artifacts SET state = 'superseded', updated_at = datetime('now') WHERE id = ?`
+    ).run(options.artifactId);
+
+    // Create new revision
+    db.prepare(
+      `INSERT INTO design_artifacts (
+          id, product_id, file_path, artifact_type, state, revision,
+          parent_artifact_id, content_hash, notes, linked_story_id, linked_sprint_id
+       ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`
+    ).run(
+      newId,
+      old.product_id,
+      options.filePath || old.file_path,
+      old.artifact_type,
+      old.revision + 1,
+      old.id,
+      options.contentHash || null,
+      options.notes || null,
+      old.linked_story_id,
+      old.linked_sprint_id
+    );
+
+    insertAudit(db, "design_artifacts", options.artifactId, "state", "frozen", "superseded", "orchestrator");
+    insertAudit(db, "design_artifacts", newId, "create", "", `revision ${old.revision + 1}`, "orchestrator");
+  });
+  tx();
+
+  printJson({
+    superseded_id: options.artifactId,
+    new_id: newId,
+    revision: old.revision + 1,
+    state: "draft",
+    status: "superseded"
+  });
+}
+
+function listDesignArtifacts(db, argv) {
+  const { options, positionals } = parseOptions(argv, {
+    "--product-id": { key: "productId", type: "value" },
+    "--state": { key: "state", type: "value" }
+  });
+  const productId = resolveProductId(db, options.productId || positionals[0]);
+
+  let query = `SELECT da.*, dr_latest.reviewer AS latest_reviewer, dr_latest.decision AS latest_decision
+     FROM design_artifacts da
+     LEFT JOIN (
+       SELECT artifact_id, reviewer, decision,
+              ROW_NUMBER() OVER (PARTITION BY artifact_id ORDER BY created_at DESC) AS rn
+       FROM design_reviews
+     ) dr_latest ON dr_latest.artifact_id = da.id AND dr_latest.rn = 1
+     WHERE da.product_id = ?`;
+  const params = [productId];
+
+  if (options.state) {
+    if (!DESIGN_STATES.has(options.state)) {
+      die(`Invalid state filter: ${options.state}`);
+    }
+    query += " AND da.state = ?";
+    params.push(options.state);
+  }
+
+  query += " ORDER BY da.revision DESC, da.created_at DESC";
+
+  const rows = db.prepare(query).all(...params);
+  printJson(rows);
+}
+
+function listDesignReviews(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--artifact-id": { key: "artifactId", type: "value" }
+  });
+  requireFields(options, "artifactId");
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM design_reviews WHERE artifact_id = ? ORDER BY created_at DESC, id DESC`
+    )
+    .all(options.artifactId);
+  printJson(rows);
+}
+
+function checkDesignFreezeGate(db, productId) {
+  const config = db.prepare("SELECT design_review_required FROM workspace_config WHERE id = 1").get();
+  if (!config || config.design_review_required !== 1) {
+    return { passed: true, reason: "Design review is not required by workspace config." };
+  }
+
+  const unfrozen = db
+    .prepare(
+      `SELECT id, state, file_path FROM design_artifacts
+       WHERE product_id = ? AND state NOT IN ('frozen', 'superseded')
+       ORDER BY id`
+    )
+    .all(productId);
+
+  if (unfrozen.length > 0) {
+    return {
+      passed: false,
+      reason: `Design freeze required but ${unfrozen.length} artifact(s) are not frozen: ${unfrozen.map(a => `${a.id} (${a.state})`).join(", ")}`,
+      blocking_artifacts: unfrozen
+    };
+  }
+
+  return { passed: true, reason: "All design artifacts are frozen or superseded." };
+}
+
 const commands = {
   "activate-sprint": activateSprint,
   "add-assumption": addAssumption,
@@ -3016,6 +3377,7 @@ const commands = {
   "complete-sprint": completeSprint,
   "complete-task": completeTask,
   "create-bug": createBug,
+  "create-design-artifact": createDesignArtifact,
   "create-epic": createEpic,
   "create-product": createProduct,
   "create-sprint": createSprint,
@@ -3023,10 +3385,13 @@ const commands = {
   "create-task": createTask,
   "finish-run": finishRun,
   "finish-session": finishSession,
+  "freeze-design": freezeDesign,
   "get-config": getConfig,
   "get-phase": getPhase,
   "guardrail-report": guardrailReport,
   "init-workspace": initWorkspace,
+  "list-design-artifacts": listDesignArtifacts,
+  "list-design-reviews": listDesignReviews,
   "list-epics": listEpics,
   "list-ready-tasks": listReadyTasks,
   "list-review-stories": listReviewStories,
@@ -3038,6 +3403,7 @@ const commands = {
   "resolve-feedback": resolveFeedback,
   "resume-session": resumeSession,
   "request-task-changes": requestTaskChanges,
+  "review-design": reviewDesign,
   "review-task": reviewTask,
   "select-run-mode": selectRunMode,
   "set-config": setConfig,
@@ -3048,7 +3414,9 @@ const commands = {
   "show-workspace-health": showWorkspaceHealth,
   "start-run": startRun,
   "start-session": startSession,
+  "submit-design": submitDesign,
   "submit-task": submitTask,
+  "supersede-design": supersedeDesign,
   "sync-state": syncState,
   "update-bug-status": updateBugStatus,
   "update-epic": updateEpic,

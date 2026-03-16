@@ -62,6 +62,21 @@ export interface DashboardData {
     done: number;
   };
   health: WorkspaceHealth;
+  designArtifacts: DesignArtifact[];
+}
+
+export interface DesignArtifact {
+  id: string;
+  product_id: string;
+  file_path: string;
+  artifact_type: string;
+  state: string;
+  revision: number;
+  parent_artifact_id: string | null;
+  content_hash: string | null;
+  notes: string | null;
+  latest_reviewer: string | null;
+  latest_decision: string | null;
 }
 
 /**
@@ -218,6 +233,7 @@ export function getDashboardData(
     phase: null,
     sprint: null,
     taskCounts: { ready: 0, in_progress: 0, in_review: 0, blocked: 0, done: 0 },
+    designArtifacts: [],
     health: health || {
       status: "not_initialized",
       issues: ["Could not read workspace health"],
@@ -292,8 +308,37 @@ export function getDashboardData(
       }
     }
 
-    return { product, phase, sprint, taskCounts, health };
+    let designArtifacts: DesignArtifact[] = [];
+    try {
+      const designRaw = runScrum("list-design-artifacts", workspaceRoot, packageRoot);
+      designArtifacts = JSON.parse(designRaw) as DesignArtifact[];
+    } catch {
+      // no design artifacts
+    }
+
+    return { product, phase, sprint, taskCounts, designArtifacts, health };
   } catch {
     return { ...emptyResult, health };
+  }
+}
+
+export function reviewDesignFromExtension(
+  workspaceRoot: string,
+  packageRoot: string,
+  artifactId: string,
+  decision: string,
+  reviewer: string,
+  summary?: string
+): { success: boolean; output: string } {
+  try {
+    let args = `review-design --artifact-id ${artifactId} --decision ${decision} --reviewer "${reviewer}"`;
+    if (summary) {
+      args += ` --summary "${summary}"`;
+    }
+    const output = runScrum(args, workspaceRoot, packageRoot);
+    return { success: true, output };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Review failed";
+    return { success: false, output: message };
   }
 }

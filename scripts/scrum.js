@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { openDatabase } = require("./lib/scrum-db");
+const { initDatabase, openDatabase } = require("./lib/scrum-db");
 const {
   collectSyncIssues,
   determineNextCommand,
@@ -17,6 +17,7 @@ const {
   logPolicyEvent,
   selectExecutionMode
 } = require("./lib/policy");
+const { fullHealthCheck } = require("./lib/health");
 
 const WORKSPACE_ROOT = process.env.SCRUM_WORKSPACE_ROOT || process.cwd();
 
@@ -89,6 +90,12 @@ const COMMAND_HELP = {
     "  review-task         Approve or request changes for a submitted task",
     "  close-sprint        Close the active sprint and write a report",
     "  sync-state          Inspect or repair drift",
+    "  init-workspace      Bootstrap or verify the workspace runtime",
+    "  show-workspace-health  Show workspace health report",
+    "  get-config          Read workspace configuration",
+    "  set-config          Update workspace configuration",
+    "  get-phase           Read workflow phase for a product",
+    "  set-phase           Transition workflow phase for a product",
     "",
     "Run `ai-scrum help <command>` or `ai-scrum <command> --help` for command-specific help."
   ].join("\n"),
@@ -179,6 +186,39 @@ const COMMAND_HELP = {
   ].join("\n"),
   "close-sprint": [
     "Usage: ai-scrum close-sprint --sprint-id <id> --closed-by <name> [--summary <text>]"
+  ].join("\n"),
+  "init-workspace": [
+    "Usage: ai-scrum init-workspace [--product-id <id>]",
+    "",
+    "Bootstrap or verify the workspace runtime. Idempotent.",
+    "Creates the database, seeds workspace_config defaults, and returns a health report."
+  ].join("\n"),
+  "show-workspace-health": [
+    "Usage: ai-scrum show-workspace-health",
+    "",
+    "Returns a read-only health report for the workspace."
+  ].join("\n"),
+  "get-config": [
+    "Usage: ai-scrum get-config [--key <key>]",
+    "",
+    "Read workspace configuration. If --key is provided, returns only that value."
+  ].join("\n"),
+  "set-config": [
+    "Usage: ai-scrum set-config --key <key> --value <value>",
+    "",
+    "Update a workspace configuration value.",
+    "Keys: project_type, planning_horizon, governance_mode, review_granularity, cli_path, model_preferences, execution_defaults"
+  ].join("\n"),
+  "get-phase": [
+    "Usage: ai-scrum get-phase [--product-id <id>]",
+    "",
+    "Read the current workflow phase for a product."
+  ].join("\n"),
+  "set-phase": [
+    "Usage: ai-scrum set-phase --phase <phase> [--product-id <id>]",
+    "",
+    "Transition the workflow phase for a product.",
+    "Phases: init, research, spec, design, planning, building, review, closeout, feedback, resume, complete"
   ].join("\n")
 };
 
@@ -291,8 +331,11 @@ function getTableName(table) {
     "audit_log",
     "bugs",
     "decisions",
+    "design_artifacts",
+    "design_reviews",
     "epic_dependencies",
     "epics",
+    "extension_install_metadata",
     "feedback",
     "master_board",
     "mvp_buckets",
@@ -306,7 +349,9 @@ function getTableName(table) {
     "task_leases",
     "task_failures",
     "task_reviews",
-    "tasks"
+    "tasks",
+    "workflow_phase",
+    "workspace_config"
   ]);
 
   if (!allowed.has(table)) {
@@ -2793,6 +2838,165 @@ function addDecision(db, argv) {
   printJson({ id, status: "created" });
 }
 
+const WORKSPACE_CONFIG_KEYS = new Set([
+  "project_type",
+  "planning_horizon",
+  "governance_mode",
+  "review_granularity",
+  "cli_path",
+  "model_preferences",
+  "execution_defaults"
+]);
+
+const WORKFLOW_PHASES = new Set([
+  "init",
+  "research",
+  "spec",
+  "design",
+  "planning",
+  "building",
+  "review",
+  "closeout",
+  "feedback",
+  "resume",
+  "complete"
+]);
+
+function initWorkspace(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--product-id": { key: "productId", type: "value" }
+  });
+
+  const { tableExists: hasTable } = require("./lib/policy");
+
+  if (hasTable(db, "workspace_config")) {
+    db.prepare("INSERT OR IGNORE INTO workspace_config (id) VALUES (1)").run();
+  }
+
+  if (hasTable(db, "extension_install_metadata")) {
+    db.prepare(
+      `INSERT OR IGNORE INTO extension_install_metadata (id, workspace_root)
+       VALUES (1, ?)`
+    ).run(WORKSPACE_ROOT);
+  }
+
+  const productId = options.productId || latestProductId(db);
+  if (productId && hasTable(db, "workflow_phase")) {
+    db.prepare(
+      `INSERT OR IGNORE INTO workflow_phase (product_id, phase)
+       VALUES (?, 'init')`
+    ).run(productId);
+  }
+
+  const { dbPath, migrationsDir, packageRoot } = require("./lib/scrum-db");
+  const health = fullHealthCheck(WORKSPACE_ROOT, packageRoot, dbPath, migrationsDir);
+  printJson({
+    status: "initialized",
+    workspace_root: WORKSPACE_ROOT,
+    health
+  });
+}
+
+function showWorkspaceHealth(db, argv) {
+  const { dbPath, migrationsDir, packageRoot } = require("./lib/scrum-db");
+  const health = fullHealthCheck(WORKSPACE_ROOT, packageRoot, dbPath, migrationsDir);
+  printJson(health);
+}
+
+function getConfig(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--key": { key: "key", type: "value" }
+  });
+
+  const row = db.prepare("SELECT * FROM workspace_config WHERE id = 1").get();
+  if (!row) {
+    die("workspace_config not initialized. Run init-workspace first.");
+  }
+
+  if (options.key) {
+    if (!WORKSPACE_CONFIG_KEYS.has(options.key)) {
+      die(`Unknown config key: ${options.key}`);
+    }
+    printJson({ key: options.key, value: row[options.key] });
+  } else {
+    printJson(row);
+  }
+}
+
+function setConfig(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--key": { key: "key", type: "value" },
+    "--value": { key: "value", type: "value" }
+  });
+  requireFields(options, "key", "value");
+
+  if (!WORKSPACE_CONFIG_KEYS.has(options.key)) {
+    die(`Unknown config key: ${options.key}`);
+  }
+
+  const row = db.prepare("SELECT * FROM workspace_config WHERE id = 1").get();
+  if (!row) {
+    die("workspace_config not initialized. Run init-workspace first.");
+  }
+
+  const oldValue = row[options.key];
+  db.prepare(
+    `UPDATE workspace_config SET ${options.key} = ?, updated_at = datetime('now') WHERE id = 1`
+  ).run(options.value);
+  insertAudit(db, "workspace_config", "1", options.key, String(oldValue), options.value, "orchestrator");
+  printJson({ key: options.key, value: options.value, status: "updated" });
+}
+
+function getPhase(db, argv) {
+  const { options, positionals } = parseOptions(argv, {
+    "--product-id": { key: "productId", type: "value" }
+  });
+  const productId = resolveProductId(db, options.productId || positionals[0]);
+
+  const row = db
+    .prepare("SELECT * FROM workflow_phase WHERE product_id = ?")
+    .get(productId);
+  if (!row) {
+    die(`No workflow phase set for product ${productId}. Run init-workspace first.`);
+  }
+  printJson(row);
+}
+
+function setPhase(db, argv) {
+  const { options } = parseOptions(argv, {
+    "--phase": { key: "phase", type: "value" },
+    "--product-id": { key: "productId", type: "value" }
+  });
+  requireFields(options, "phase");
+
+  if (!WORKFLOW_PHASES.has(options.phase)) {
+    die(`Invalid phase: ${options.phase}. Must be one of: ${[...WORKFLOW_PHASES].join(", ")}`);
+  }
+
+  const productId = resolveProductId(db, options.productId);
+  const existing = db
+    .prepare("SELECT phase FROM workflow_phase WHERE product_id = ?")
+    .get(productId);
+
+  if (existing) {
+    const oldPhase = existing.phase;
+    db.prepare(
+      `UPDATE workflow_phase
+       SET phase = ?, previous_phase = ?, entered_at = datetime('now'), updated_at = datetime('now')
+       WHERE product_id = ?`
+    ).run(options.phase, oldPhase, productId);
+    insertAudit(db, "workflow_phase", productId, "phase", oldPhase, options.phase, "orchestrator");
+  } else {
+    db.prepare(
+      `INSERT INTO workflow_phase (product_id, phase)
+       VALUES (?, ?)`
+    ).run(productId, options.phase);
+    insertAudit(db, "workflow_phase", productId, "phase", "", options.phase, "orchestrator");
+  }
+
+  printJson({ product_id: productId, phase: options.phase, status: "updated" });
+}
+
 const commands = {
   "activate-sprint": activateSprint,
   "add-assumption": addAssumption,
@@ -2819,7 +3023,10 @@ const commands = {
   "create-task": createTask,
   "finish-run": finishRun,
   "finish-session": finishSession,
+  "get-config": getConfig,
+  "get-phase": getPhase,
   "guardrail-report": guardrailReport,
+  "init-workspace": initWorkspace,
   "list-epics": listEpics,
   "list-ready-tasks": listReadyTasks,
   "list-review-stories": listReviewStories,
@@ -2833,9 +3040,12 @@ const commands = {
   "request-task-changes": requestTaskChanges,
   "review-task": reviewTask,
   "select-run-mode": selectRunMode,
+  "set-config": setConfig,
+  "set-phase": setPhase,
   "set-sprint-criterion": setSprintCriterion,
   "show-active-sprint": showActiveSprint,
   "show-product": showProduct,
+  "show-workspace-health": showWorkspaceHealth,
   "start-run": startRun,
   "start-session": startSession,
   "submit-task": submitTask,
@@ -2862,7 +3072,11 @@ try {
       die(`Unknown command: ${command}`);
     }
 
-    ({ db } = openDatabase());
+    if (command === "init-workspace") {
+      ({ db } = initDatabase());
+    } else {
+      ({ db } = openDatabase());
+    }
     handler(db, process.argv.slice(3));
   }
 } catch (error) {

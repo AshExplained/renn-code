@@ -64,15 +64,37 @@ function createPackagedExtensionInstall(): string {
 // --- Pre-flight: verify backend was prepared ---
 
 describe("Extension: backend payload exists", () => {
-  it("prepare-backend has been run and backend/ contains scripts/scrum.js", () => {
+  it("prepare-backend has been run and backend/ is self-contained", () => {
     assert.ok(
       fs.existsSync(path.join(builtBackend, "scripts", "scrum.js")),
       "backend/scripts/scrum.js must exist — run `npm run prepare-backend` first"
     );
     assert.ok(
-      fs.existsSync(path.join(builtBackend, "node_modules", "better-sqlite3")),
-      "backend/node_modules/better-sqlite3 must exist"
+      fs.existsSync(path.join(builtBackend, "scripts", "init-db.js")),
+      "backend/scripts/init-db.js must exist"
     );
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "scripts", "install.js")),
+      "backend/scripts/install.js must exist"
+    );
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "scripts", "lib", "scrum-db.js")),
+      "backend/scripts/lib/scrum-db.js must exist"
+    );
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "delivery", "migrations", "001_init.sql")),
+      "backend/delivery/migrations/ must exist"
+    );
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "node_modules", "better-sqlite3", "package.json")),
+      "backend/node_modules/better-sqlite3 must exist — run `npm run prepare-backend`"
+    );
+
+    // Verify better-sqlite3 can actually be loaded from the backend
+    const bsqlMain = require.resolve("better-sqlite3", {
+      paths: [path.join(builtBackend, "node_modules")]
+    });
+    assert.ok(bsqlMain, "better-sqlite3 must be resolvable from backend/node_modules");
   });
 });
 

@@ -90,11 +90,22 @@ fs.writeFileSync(pkgPath, JSON.stringify(backendPkg, null, 2) + "\n");
 console.log("  created: backend/package.json");
 
 // 5. Install better-sqlite3 in the backend dir
+//    Use a temp cache outside the backend dir to avoid shipping cache files.
+const tmpCache = path.join(require("node:os").tmpdir(), "renn-backend-npm-cache");
 console.log("\n  Installing better-sqlite3 in backend/...");
 execSync("npm install --omit=dev", {
   cwd: backendDir,
   stdio: "inherit",
-  env: { ...process.env, npm_config_cache: path.join(backendDir, ".npm-cache") }
+  env: { ...process.env, npm_config_cache: tmpCache }
 });
 
+// 6. Verify the install actually worked
+const bsqlPath = path.join(backendDir, "node_modules", "better-sqlite3", "package.json");
+if (!fs.existsSync(bsqlPath)) {
+  console.error("\nERROR: better-sqlite3 was not installed in backend/node_modules/.");
+  console.error("The packaged extension will not work without it.");
+  process.exit(1);
+}
+
+console.log(`  verified: backend/node_modules/better-sqlite3 exists`);
 console.log("\nBackend payload ready at extension/backend/");

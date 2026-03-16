@@ -52,10 +52,12 @@
     }
   },
   "scripts": {
+    "prepare-backend": "node scripts/prepare-backend.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "test": "node --test out/tests/**/*.test.js",
+    "prepackage": "npm run prepare-backend",
     "package": "vsce package"
   },
   "devDependencies": {

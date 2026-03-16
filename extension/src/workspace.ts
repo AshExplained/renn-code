@@ -70,11 +70,14 @@ export interface DashboardData {
  * Search order:
  * 1. Workspace-local (workspace IS the harness repo)
  * 2. node_modules dependency inside the workspace
- * 3. Extension install location (extension/ is a sibling of scripts/)
+ * 3. Bundled backend inside the extension install
+ *    (extension/backend/ — created by scripts/prepare-backend.js)
  *
- * The third fallback is the key Phase 1 enabler: it lets the globally
- * installed extension initialize arbitrary workspaces without requiring
- * the package to already be present in the workspace.
+ * Step 3 is the key Phase 1 enabler: after `vsce package` and VS Code
+ * install, the extension lives at ~/.vscode/extensions/renn-code-x.y.z/
+ * with a backend/ subdirectory containing scripts/, delivery/migrations/,
+ * skill folders, and better-sqlite3. This lets the globally installed
+ * extension initialize arbitrary workspaces.
  */
 export function findPackageRoot(
   workspaceRoot: string,
@@ -98,24 +101,13 @@ export function findPackageRoot(
     return path.join(workspaceRoot, "node_modules", "ai-scrum-workflow");
   }
 
-  // 3. Resolve from the extension's own install location.
-  //    The extension lives at <packageRoot>/extension/out/extension.js,
-  //    so the package root is two levels up from __dirname at runtime.
-  //    When extensionPath is provided (e.g. context.extensionPath), use it.
+  // 3. Bundled backend inside the packaged extension
   if (extensionPath) {
-    const fromExtension = path.resolve(extensionPath, "..");
-    const candidate = path.join(fromExtension, "scripts", "scrum.js");
-    if (fs.existsSync(candidate)) {
-      return fromExtension;
+    const bundled = path.join(extensionPath, "backend");
+    const bundledScrum = path.join(bundled, "scripts", "scrum.js");
+    if (fs.existsSync(bundledScrum)) {
+      return bundled;
     }
-  }
-
-  // 4. Fallback: resolve relative to this compiled file's location
-  //    (out/workspace.js → extension/ → packageRoot/)
-  const selfResolved = path.resolve(__dirname, "..", "..");
-  const selfCandidate = path.join(selfResolved, "scripts", "scrum.js");
-  if (fs.existsSync(selfCandidate)) {
-    return selfResolved;
   }
 
   return null;

@@ -13,13 +13,32 @@ import {
   getDashboardData,
 } from "../workspace";
 
-// The extension sits at <packageRoot>/extension/
-// so the packageRoot is one level up from the extension dir.
+/**
+ * These tests simulate a PACKAGED extension install — NOT the source tree.
+ *
+ * They create a temp directory that mimics what VS Code would have after
+ * installing the VSIX:
+ *
+ *   /tmp/fake-vscode-extension/
+ *     backend/
+ *       scripts/scrum.js, init-db.js, install.js, lib/
+ *       delivery/migrations/
+ *       .agents/skills/
+ *       .claude/skills/
+ *       node_modules/better-sqlite3/
+ *       package.json
+ *
+ * findPackageRoot is called with extensionPath = "/tmp/fake-vscode-extension/"
+ * and must resolve to "/tmp/fake-vscode-extension/backend/" — proving the
+ * packaged extension can operate without the source repo.
+ */
+
+// The real backend payload built by prepare-backend.js
 const extensionDir = path.resolve(__dirname, "..", "..");
-const packageRoot = path.resolve(extensionDir, "..");
+const builtBackend = path.join(extensionDir, "backend");
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ext-test-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "ext-pkg-test-"));
 }
 
 function cleanup(dir: string): void {
@@ -30,198 +49,232 @@ function cleanup(dir: string): void {
   }
 }
 
-function copySkillFolders(targetRoot: string): void {
-  for (const tree of [".agents/skills", ".claude/skills"]) {
-    const src = path.join(packageRoot, tree);
-    const dst = path.join(targetRoot, tree);
-    if (fs.existsSync(src)) {
-      fs.cpSync(src, dst, { recursive: true });
-    }
-  }
+/**
+ * Create a simulated packaged extension install in a temp directory.
+ * Copies the prepared backend payload — the same files that would be
+ * inside the VSIX after `vsce package`.
+ */
+function createPackagedExtensionInstall(): string {
+  const fakeExtDir = tmpDir();
+  const fakeBackend = path.join(fakeExtDir, "backend");
+  fs.cpSync(builtBackend, fakeBackend, { recursive: true });
+  return fakeExtDir;
 }
 
-// --- Package Discovery ---
+// --- Pre-flight: verify backend was prepared ---
 
-describe("Extension: findPackageRoot", () => {
-  it("finds the package root from the workspace itself", () => {
-    const result = findPackageRoot(packageRoot);
-    assert.equal(result, packageRoot);
+describe("Extension: backend payload exists", () => {
+  it("prepare-backend has been run and backend/ contains scripts/scrum.js", () => {
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "scripts", "scrum.js")),
+      "backend/scripts/scrum.js must exist — run `npm run prepare-backend` first"
+    );
+    assert.ok(
+      fs.existsSync(path.join(builtBackend, "node_modules", "better-sqlite3")),
+      "backend/node_modules/better-sqlite3 must exist"
+    );
+  });
+});
+
+// --- Package Discovery (packaged layout) ---
+
+describe("Extension: findPackageRoot (packaged layout)", () => {
+  let fakeExtDir: string;
+
+  before(() => {
+    fakeExtDir = createPackagedExtensionInstall();
   });
 
-  it("finds the package root via extensionPath for an empty workspace", () => {
-    const emptyDir = tmpDir();
+  after(() => cleanup(fakeExtDir));
+
+  it("finds backend/ inside a simulated packaged extension install", () => {
+    const emptyWorkspace = tmpDir();
     try {
-      // With extensionPath — should find it via the extension's own location
-      const withExt = findPackageRoot(emptyDir, extensionDir);
-      assert.equal(withExt, packageRoot, "should resolve from extensionPath");
+      const result = findPackageRoot(emptyWorkspace, fakeExtDir);
+      const expected = path.join(fakeExtDir, "backend");
+      assert.equal(result, expected, "should resolve to <extensionPath>/backend/");
     } finally {
-      cleanup(emptyDir);
+      cleanup(emptyWorkspace);
     }
   });
 
-  it("finds the package root via __dirname fallback", () => {
-    const emptyDir = tmpDir();
+  it("returns null when extensionPath has no backend/", () => {
+    const emptyWorkspace = tmpDir();
+    const emptyExtDir = tmpDir();
     try {
-      // Even without extensionPath, the compiled code resolves via __dirname
-      // since the extension output lives inside the package tree.
-      const result = findPackageRoot(emptyDir);
-      assert.equal(result, packageRoot, "should resolve via __dirname fallback");
+      const result = findPackageRoot(emptyWorkspace, emptyExtDir);
+      assert.equal(result, null, "should return null with no backend/");
     } finally {
-      cleanup(emptyDir);
+      cleanup(emptyWorkspace);
+      cleanup(emptyExtDir);
+    }
+  });
+
+  it("prefers workspace-local scripts over bundled backend", () => {
+    // When the workspace IS the harness repo, workspace-local wins
+    const repoRoot = path.resolve(extensionDir, "..");
+    if (fs.existsSync(path.join(repoRoot, "scripts", "scrum.js"))) {
+      const result = findPackageRoot(repoRoot, fakeExtDir);
+      assert.equal(result, repoRoot, "workspace-local should take priority");
     }
   });
 });
 
-// --- Workspace Detection ---
+// --- Workspace Detection (packaged layout) ---
 
-describe("Extension: detectWorkspace", () => {
-  it("detects uninitialized workspace", () => {
-    const dir = tmpDir();
+describe("Extension: detectWorkspace (packaged layout)", () => {
+  let fakeExtDir: string;
+
+  before(() => {
+    fakeExtDir = createPackagedExtensionInstall();
+  });
+
+  after(() => cleanup(fakeExtDir));
+
+  it("detects uninitialized workspace and still finds the package root", () => {
+    const workspace = tmpDir();
     try {
-      const result = detectWorkspace(dir, extensionDir);
+      const result = detectWorkspace(workspace, fakeExtDir);
       assert.equal(result.initialized, false);
       assert.equal(result.dbExists, false);
-      assert.equal(result.packageRoot, packageRoot);
+      assert.ok(result.packageRoot, "should find package root via bundled backend");
+      assert.ok(
+        result.packageRoot!.endsWith("backend"),
+        "package root should be the backend/ dir"
+      );
     } finally {
-      cleanup(dir);
-    }
-  });
-
-  it("detects initialized workspace", () => {
-    const dir = tmpDir();
-    try {
-      copySkillFolders(dir);
-      // Initialize via CLI
-      const initDbJs = path.join(packageRoot, "scripts", "init-db.js");
-      execSync(`node "${initDbJs}"`, {
-        cwd: dir,
-        env: { ...process.env, SCRUM_WORKSPACE_ROOT: dir },
-        encoding: "utf8",
-      });
-      const result = detectWorkspace(dir, extensionDir);
-      assert.equal(result.initialized, true);
-      assert.equal(result.dbExists, true);
-    } finally {
-      cleanup(dir);
+      cleanup(workspace);
     }
   });
 });
 
-// --- Initialize Command Wiring ---
+// --- Initialize from packaged extension ---
 
-describe("Extension: initializeWorkspace", () => {
-  it("initializes an empty workspace using the extension's package root", () => {
-    const dir = tmpDir();
+describe("Extension: initializeWorkspace (packaged layout)", () => {
+  let fakeExtDir: string;
+
+  before(() => {
+    fakeExtDir = createPackagedExtensionInstall();
+  });
+
+  after(() => cleanup(fakeExtDir));
+
+  it("initializes an empty workspace using the bundled backend", () => {
+    const workspace = tmpDir();
     try {
-      const result = initializeWorkspace(dir, packageRoot);
+      const packageRoot = path.join(fakeExtDir, "backend");
+      const result = initializeWorkspace(workspace, packageRoot);
       assert.ok(result.success, `init should succeed: ${result.output}`);
 
-      // Verify DB was created
-      const dbPath = path.join(dir, "delivery", "scrum.db");
+      const dbPath = path.join(workspace, "delivery", "scrum.db");
       assert.ok(fs.existsSync(dbPath), "scrum.db should exist");
 
-      // Verify detection now sees it as initialized
-      const detection = detectWorkspace(dir, extensionDir);
-      assert.equal(detection.initialized, true);
+      // Skill folders should be installed in the workspace
+      assert.ok(
+        fs.existsSync(path.join(workspace, ".agents", "skills", "run-sprint")),
+        "skill folders should be installed"
+      );
     } finally {
-      cleanup(dir);
+      cleanup(workspace);
     }
   });
 
-  it("is idempotent — second init does not fail", () => {
-    const dir = tmpDir();
+  it("is idempotent from the packaged backend", () => {
+    const workspace = tmpDir();
     try {
-      const result1 = initializeWorkspace(dir, packageRoot);
+      const packageRoot = path.join(fakeExtDir, "backend");
+      const result1 = initializeWorkspace(workspace, packageRoot);
       assert.ok(result1.success);
 
-      const result2 = initializeWorkspace(dir, packageRoot);
+      const result2 = initializeWorkspace(workspace, packageRoot);
       assert.ok(result2.success, "second init should also succeed");
     } finally {
-      cleanup(dir);
+      cleanup(workspace);
     }
   });
 });
 
-// --- Repair Command Wiring ---
+// --- Repair from packaged extension ---
 
-describe("Extension: repairWorkspace", () => {
-  it("repairs a workspace with missing skill folders", () => {
-    const dir = tmpDir();
+describe("Extension: repairWorkspace (packaged layout)", () => {
+  let fakeExtDir: string;
+
+  before(() => {
+    fakeExtDir = createPackagedExtensionInstall();
+  });
+
+  after(() => cleanup(fakeExtDir));
+
+  it("repairs missing skill folders using the bundled backend", () => {
+    const workspace = tmpDir();
     try {
-      // Initialize first
-      initializeWorkspace(dir, packageRoot);
+      const packageRoot = path.join(fakeExtDir, "backend");
+      initializeWorkspace(workspace, packageRoot);
 
-      // Break it — delete some skill folders
-      const agentsSkills = path.join(dir, ".agents", "skills");
-      if (fs.existsSync(path.join(agentsSkills, "run-sprint"))) {
-        fs.rmSync(path.join(agentsSkills, "run-sprint"), { recursive: true });
-      }
+      // Break it — delete a skill folder
+      const agentsSkills = path.join(workspace, ".agents", "skills");
+      fs.rmSync(path.join(agentsSkills, "run-sprint"), { recursive: true });
 
       // Health should show needs_repair
-      const healthBefore = getWorkspaceHealth(dir, packageRoot);
-      assert.ok(healthBefore, "should get health");
+      const healthBefore = getWorkspaceHealth(workspace, packageRoot);
+      assert.ok(healthBefore);
       assert.equal(healthBefore!.status, "needs_repair");
 
       // Repair
-      const result = repairWorkspace(dir, packageRoot);
+      const result = repairWorkspace(workspace, packageRoot);
       assert.ok(result.success, `repair should succeed: ${result.output}`);
 
-      // Health should now be healthy
-      const healthAfter = getWorkspaceHealth(dir, packageRoot);
-      assert.ok(healthAfter, "should get health after repair");
+      // Should be healthy now
+      const healthAfter = getWorkspaceHealth(workspace, packageRoot);
+      assert.ok(healthAfter);
       assert.equal(healthAfter!.status, "healthy");
     } finally {
-      cleanup(dir);
+      cleanup(workspace);
     }
   });
 });
 
-// --- Initialized vs Uninitialized State ---
+// --- Dashboard data (packaged layout) ---
 
-describe("Extension: initialized vs uninitialized state behavior", () => {
-  it("getDashboardData returns empty data for uninitialized workspace", () => {
-    const dir = tmpDir();
-    try {
-      // Initialize DB but no product
-      initializeWorkspace(dir, packageRoot);
-      const data = getDashboardData(dir, packageRoot);
-      assert.equal(data.product, null, "no product yet");
-      assert.equal(data.health.status, "healthy");
-    } finally {
-      cleanup(dir);
-    }
+describe("Extension: getDashboardData (packaged layout)", () => {
+  let fakeExtDir: string;
+
+  before(() => {
+    fakeExtDir = createPackagedExtensionInstall();
   });
 
-  it("getDashboardData returns product data for initialized workspace with product", () => {
-    const dir = tmpDir();
+  after(() => cleanup(fakeExtDir));
+
+  it("returns product data from a workspace initialized via bundled backend", () => {
+    const workspace = tmpDir();
     try {
-      initializeWorkspace(dir, packageRoot);
+      const packageRoot = path.join(fakeExtDir, "backend");
+      initializeWorkspace(workspace, packageRoot);
 
       // Create a product
       const scrumJs = path.join(packageRoot, "scripts", "scrum.js");
       execSync(
-        `node "${scrumJs}" create-product --name "ExtTest" --idea "test" --goal "test"`,
+        `node "${scrumJs}" create-product --name "PkgTest" --idea "test" --goal "test"`,
         {
-          cwd: dir,
-          env: { ...process.env, SCRUM_WORKSPACE_ROOT: dir },
+          cwd: workspace,
+          env: { ...process.env, SCRUM_WORKSPACE_ROOT: workspace },
           encoding: "utf8",
         }
       );
-      // Re-init to seed workflow_phase
       execSync(`node "${scrumJs}" init-workspace`, {
-        cwd: dir,
-        env: { ...process.env, SCRUM_WORKSPACE_ROOT: dir },
+        cwd: workspace,
+        env: { ...process.env, SCRUM_WORKSPACE_ROOT: workspace },
         encoding: "utf8",
       });
 
-      const data = getDashboardData(dir, packageRoot);
+      const data = getDashboardData(workspace, packageRoot);
       assert.ok(data.product, "should have product");
-      assert.equal(data.product!.name, "ExtTest");
-      assert.equal(data.product!.status, "draft");
+      assert.equal(data.product!.name, "PkgTest");
       assert.ok(data.phase, "should have phase");
       assert.equal(data.phase!.phase, "init");
+      assert.equal(data.health.status, "healthy");
     } finally {
-      cleanup(dir);
+      cleanup(workspace);
     }
   });
 });

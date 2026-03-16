@@ -11,7 +11,8 @@ This directory now stores the SQLite delivery state:
 - `migrations/007_acceptance_gates.sql`: story acceptance and human review gates
 - `migrations/008_workspace_config.sql`: workspace-level configuration singleton
 - `migrations/009_workflow_phase.sql`: product lifecycle phase tracking
-- `migrations/010_design_and_extension_metadata.sql`: design artifacts, design reviews (Phase 0 enabling schema for Phase 2), and extension install metadata
+- `migrations/010_design_and_extension_metadata.sql`: design artifacts, design reviews, and extension install metadata
+- `migrations/011_design_workflow.sql`: design_review_required config flag, reviewer session linkage, artifact-story/sprint linkage
 - `scrum.db`: runtime database, intentionally gitignored
 
 Use:

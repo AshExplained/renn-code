@@ -62,6 +62,21 @@ export interface DashboardData {
     done: number;
   };
   health: WorkspaceHealth;
+  designArtifacts: DesignArtifact[];
+}
+
+export interface DesignArtifact {
+  id: string;
+  product_id: string;
+  file_path: string;
+  artifact_type: string;
+  state: string;
+  revision: number;
+  parent_artifact_id: string | null;
+  content_hash: string | null;
+  notes: string | null;
+  latest_reviewer: string | null;
+  latest_decision: string | null;
 }
 
 /**
@@ -218,6 +233,7 @@ export function getDashboardData(
     phase: null,
     sprint: null,
     taskCounts: { ready: 0, in_progress: 0, in_review: 0, blocked: 0, done: 0 },
+    designArtifacts: [],
     health: health || {
       status: "not_initialized",
       issues: ["Could not read workspace health"],
@@ -292,8 +308,105 @@ export function getDashboardData(
       }
     }
 
-    return { product, phase, sprint, taskCounts, health };
+    let designArtifacts: DesignArtifact[] = [];
+    try {
+      const designRaw = runScrum("list-design-artifacts", workspaceRoot, packageRoot);
+      designArtifacts = JSON.parse(designRaw) as DesignArtifact[];
+    } catch {
+      // no design artifacts
+    }
+
+    return { product, phase, sprint, taskCounts, designArtifacts, health };
   } catch {
     return { ...emptyResult, health };
+  }
+}
+
+/**
+ * Create a reviewer session for design review.
+ * This ensures the reviewer operates in a separate context from the designer.
+ */
+export function createReviewerSession(
+  workspaceRoot: string,
+  packageRoot: string
+): { sessionId: number } | null {
+  try {
+    const output = runScrum(
+      "start-session --skill review-design --mode design-review",
+      workspaceRoot,
+      packageRoot
+    );
+    const result = JSON.parse(output);
+    return { sessionId: result.session_id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Review a design artifact from the extension.
+ * Creates a reviewer session automatically to enforce the fresh-lens rule.
+ */
+export function reviewDesignFromExtension(
+  workspaceRoot: string,
+  packageRoot: string,
+  artifactId: string,
+  decision: string,
+  reviewer: string,
+  summary?: string
+): { success: boolean; output: string } {
+  try {
+    // Create a reviewer session to enforce fresh-lens rule
+    const session = createReviewerSession(workspaceRoot, packageRoot);
+    const sessionArg = session
+      ? ` --reviewer-session-id ${session.sessionId}`
+      : "";
+
+    let args = `review-design --artifact-id ${artifactId} --decision ${decision} --reviewer "${reviewer}"${sessionArg}`;
+    if (summary) {
+      args += ` --summary "${summary}"`;
+    }
+    const output = runScrum(args, workspaceRoot, packageRoot);
+    return { success: true, output };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Review failed";
+    return { success: false, output: message };
+  }
+}
+
+/**
+ * Approve and freeze a design artifact in one extension action.
+ * Calls review-design (approved) then freeze-design to complete the
+ * full approval lifecycle that the CLI path does in two steps.
+ */
+export function approveAndFreezeDesign(
+  workspaceRoot: string,
+  packageRoot: string,
+  artifactId: string,
+  reviewer: string
+): { success: boolean; output: string } {
+  // Step 1: Approve
+  const reviewResult = reviewDesignFromExtension(
+    workspaceRoot,
+    packageRoot,
+    artifactId,
+    "approved",
+    reviewer
+  );
+  if (!reviewResult.success) {
+    return reviewResult;
+  }
+
+  // Step 2: Freeze
+  try {
+    const freezeOutput = runScrum(
+      `freeze-design --artifact-id ${artifactId}`,
+      workspaceRoot,
+      packageRoot
+    );
+    return { success: true, output: freezeOutput };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Freeze failed";
+    return { success: false, output: `Approved but freeze failed: ${message}` };
   }
 }

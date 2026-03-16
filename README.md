@@ -5,7 +5,7 @@ Renn Code is a DB-first AI product harness for turning a project workspace into 
 - a SQLite control plane
 - a sprint-based execution loop
 - project-scoped agent skill files
-- a future VS Code extension that acts as mission control
+- a VS Code extension product shell that acts as mission control
 
 The current repo contains the core orchestration ideas, SQLite-backed workflow, CLI/runtime pieces, and the evolving unified architecture spec for the full product direction.
 
@@ -18,6 +18,7 @@ The direction of the project is now:
 - if the workspace is not initialized, click a button to initialize the harness locally in that project
 - if the workspace is initialized, use the extension as a mission-control dashboard for status, design review, sprint execution, blockers, reviews, and analytics
 - keep the actual runtime state inside the workspace, not inside the extension
+- let users work through buttons, dashboards, and watched VS Code terminals without losing the option to use terminal commands directly
 
 In other words:
 
@@ -30,6 +31,7 @@ In other words:
 - DB-first, not giant mutable project files
 - one active sprint at a time
 - automate deeply, but with explicit governance and review gates
+- use a fresh-lens reviewer for major review steps instead of letting implementation self-certify completion
 - keep project-local skill files for terminal-driven agent tools
 - preserve human visibility through dashboards, terminals, review flows, and audit trails
 
@@ -68,7 +70,7 @@ Meaning:
 - `/plan-epics` defines the high-level feature groups
 - `/plan-sprint` creates exactly one active sprint with detailed work
 - `/run-sprint` runs the policy-aware sprint execution loop
-- `/review-sprint` approves work or creates follow-up fixes
+- `/review-sprint` is the fresh-lens review step: it should be performed by a separate reviewer session, reviewer agent, or human reviewer, and it either approves work or creates follow-up fixes
 - `/close-sprint` closes the sprint and writes closeout output
 - `/add-feedback` feeds bugs, UAT, and sponsor feedback back into planning
 - `/sync-state` recovers from interruptions, stale state, and drift
@@ -95,6 +97,7 @@ Planned extension responsibilities include:
 
 - detect whether a workspace is harness-enabled
 - offer one-click initialization when it is not
+- install workspace-local runtime pieces such as DB/config/skill files during initialization
 - show a project dashboard when it is
 - expose buttons for the common workflow actions
 - provide design review and freeze flows
@@ -113,13 +116,19 @@ Renn Code is designed to work well in both:
 
 The workspace-local skill folders are a feature, not a fallback. They make the project self-contained and let tools like Claude, Codex, and Gemini read project-scoped instructions directly.
 
+The extension and the terminal should both sit on top of the same underlying harness runtime:
+
+- extension buttons call the same DB-backed orchestration layer
+- workspace-local skill files support terminal and agent-tool workflows
+- users can choose between mission-control UX and terminal-first UX without splitting the system in two
+
 ## Current Repository Contents
 
 Today this repo includes:
 
 - `scripts/scrum.js`: orchestrator CLI
 - `scripts/init-db.js`: DB bootstrap
-- `delivery/migrations/`: SQLite schema migrations
+- `delivery/migrations/`: SQLite schema migrations through task leases, session logging, and acceptance gates
 - `.agents/skills/`: shared project skills
 - `.claude/skills/`: Claude-oriented mirrors
 - `harness-full.md`: the main unified architecture and product-direction spec
@@ -155,7 +164,7 @@ README.md
 
 - `.agents/skills/`: shared project-scoped skills
 - `.claude/skills/`: Claude-oriented skill wrappers
-- `delivery/`: SQLite migrations and runtime DB location
+- `delivery/`: SQLite migrations and runtime DB location, including the current acceptance-gate schema layer
 - `planning/`: reports and exported snapshots
 - `scripts/`: bootstrap and orchestration scripts
 - `docs/`: supporting reference docs
@@ -195,3 +204,7 @@ The goal is to build a real product-development harness that feels closer to a d
 The most complete statement of the current direction lives in:
 
 - [harness-full.md](/Users/ash/Development/Codex-projects/combine-harness/v1/harness-full.md)
+
+The implementation roadmap for building that direction lives in:
+
+- [docs/implementation-plan.md](/Users/ash/Development/Codex-projects/combine-harness/v1/docs/implementation-plan.md)

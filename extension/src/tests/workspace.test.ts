@@ -57,7 +57,10 @@ function cleanup(dir: string): void {
 function createPackagedExtensionInstall(): string {
   const fakeExtDir = tmpDir();
   const fakeBackend = path.join(fakeExtDir, "backend");
-  fs.cpSync(builtBackend, fakeBackend, { recursive: true });
+  // dereference: true ensures symlinks are copied as real files,
+  // making the copy portable — same as what vsce package does when
+  // building the VSIX zip.
+  fs.cpSync(builtBackend, fakeBackend, { recursive: true, dereference: true });
   return fakeExtDir;
 }
 

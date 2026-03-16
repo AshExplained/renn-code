@@ -99,13 +99,53 @@ execSync("npm install --omit=dev", {
   env: { ...process.env, npm_config_cache: tmpCache }
 });
 
-// 6. Verify the install actually worked
+// 6. Verify the install actually worked — static check
 const bsqlPath = path.join(backendDir, "node_modules", "better-sqlite3", "package.json");
 if (!fs.existsSync(bsqlPath)) {
   console.error("\nERROR: better-sqlite3 was not installed in backend/node_modules/.");
   console.error("The packaged extension will not work without it.");
   process.exit(1);
 }
+console.log("  verified: backend/node_modules/better-sqlite3 exists");
 
-console.log(`  verified: backend/node_modules/better-sqlite3 exists`);
+// 7. End-to-end smoke test: copy the backend to a temp dir (simulating
+//    a packaged VSIX install) and run init-db.js from there.
+//    This proves the backend is fully self-contained and portable.
+const os = require("node:os");
+const smokeDir = fs.mkdtempSync(path.join(os.tmpdir(), "renn-smoke-"));
+const smokeBackend = path.join(smokeDir, "backend");
+const smokeWorkspace = path.join(smokeDir, "workspace");
+
+try {
+  fs.cpSync(backendDir, smokeBackend, { recursive: true, dereference: true });
+  fs.mkdirSync(smokeWorkspace, { recursive: true });
+
+  const initDbJs = path.join(smokeBackend, "scripts", "init-db.js");
+  const dbPath = path.join(smokeWorkspace, "delivery", "scrum.db");
+
+  execSync(`node "${initDbJs}"`, {
+    cwd: smokeWorkspace,
+    env: {
+      ...process.env,
+      SCRUM_WORKSPACE_ROOT: smokeWorkspace,
+      SCRUM_DB_PATH: dbPath
+    },
+    encoding: "utf8",
+    timeout: 15000
+  });
+
+  if (!fs.existsSync(dbPath)) {
+    console.error("\nERROR: Smoke test failed — init-db.js did not create the database.");
+    process.exit(1);
+  }
+
+  console.log("  smoke test: backend is portable (init-db.js succeeded from copied location)");
+} catch (error) {
+  console.error(`\nERROR: Smoke test failed — the bundled backend is not self-contained.`);
+  console.error(error.message || error);
+  process.exit(1);
+} finally {
+  fs.rmSync(smokeDir, { recursive: true, force: true });
+}
+
 console.log("\nBackend payload ready at extension/backend/");

@@ -1,0 +1,68 @@
+{
+  "name": "renn-code",
+  "displayName": "Renn Code",
+  "description": "DB-first AI product harness — mission control for your workspace.",
+  "version": "0.1.0",
+  "publisher": "renn-code",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rennCode.initializeWorkspace",
+        "title": "Initialize Harness In This Project",
+        "category": "Renn Code"
+      },
+      {
+        "command": "rennCode.refreshStatus",
+        "title": "Refresh Status",
+        "category": "Renn Code"
+      },
+      {
+        "command": "rennCode.repairWorkspace",
+        "title": "Repair Workspace",
+        "category": "Renn Code"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "renn-code",
+          "title": "Renn Code",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "renn-code": [
+        {
+          "id": "rennCode.status",
+          "name": "Mission Control",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "prepare-backend": "node scripts/prepare-backend.js",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "node --test out/tests/**/*.test.js",
+    "prepackage": "npm run prepare-backend",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
